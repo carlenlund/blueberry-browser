@@ -31,6 +31,9 @@ const topBarAPI = {
   // Sidebar
   toggleSidebar: () =>
     electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+
+  traceFlow: (color: "red" | "green" | "blue", source: "topbar" | "sidebar") =>
+    electronAPI.ipcRenderer.invoke("debug-trace-flow", { color, source }),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

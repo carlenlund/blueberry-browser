@@ -2,6 +2,7 @@ import { BaseWindow, shell } from "electron";
 import { Tab } from "./Tab";
 import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
+import { TabTraceOverlay } from "./TabTraceOverlay";
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -10,6 +11,7 @@ export class Window {
   private tabCounter: number = 0;
   private _topBar: TopBar;
   private _sideBar: SideBar;
+  private _tabTraceOverlay: TabTraceOverlay;
 
   constructor() {
     // Create the browser window.
@@ -31,7 +33,9 @@ export class Window {
     // Set the window reference on the LLM client to avoid circular dependency
     this._sideBar.client.setWindow(this);
 
-    // Create the first tab
+    this._tabTraceOverlay = new TabTraceOverlay(this._baseWindow);
+
+    // Create the first tab (stacked above overlay; createTab re-raises overlay)
     this.createTab();
 
     // Set up window resize handler
@@ -39,6 +43,7 @@ export class Window {
       this.updateTabBounds();
       this._topBar.updateBounds();
       this._sideBar.updateBounds();
+      this._tabTraceOverlay.updateBounds();
       // Notify renderer of resize through active tab
       const bounds = this._baseWindow.getBounds();
       if (this.activeTab) {
@@ -96,13 +101,13 @@ export class Window {
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
 
-    // Set the bounds to fill the window below the topbar and to the left of sidebar
-    const bounds = this._baseWindow.getBounds();
+    // Use client (content) size so layout matches TabTraceOverlay and the title-bar overlay.
+    const [contentWidth, contentHeight] = this._baseWindow.getContentSize();
     tab.view.setBounds({
       x: 0,
       y: 88, // Start below the topbar
-      width: bounds.width - 400, // Subtract sidebar width
-      height: bounds.height - 88, // Subtract topbar height
+      width: contentWidth - 400, // Subtract sidebar width
+      height: contentHeight - 88, // Subtract topbar height
     });
 
     // Store the tab
@@ -115,6 +120,8 @@ export class Window {
       // Hide the tab initially if it's not the first one
       tab.hide();
     }
+
+    this._tabTraceOverlay.raiseAboveTabs();
 
     return tab;
   }
@@ -231,16 +238,15 @@ export class Window {
 
   // Handle window resize to update tab bounds
   private updateTabBounds(): void {
-    const bounds = this._baseWindow.getBounds();
-    // Only subtract sidebar width if it's visible
+    const [contentWidth, contentHeight] = this._baseWindow.getContentSize();
     const sidebarWidth = this._sideBar.getIsVisible() ? 400 : 0;
 
     this.tabsMap.forEach((tab) => {
       tab.view.setBounds({
         x: 0,
-        y: 88, // Start below the topbar
-        width: bounds.width - sidebarWidth,
-        height: bounds.height - 88, // Subtract topbar height
+        y: 88,
+        width: contentWidth - sidebarWidth,
+        height: contentHeight - 88,
       });
     });
   }
@@ -249,6 +255,8 @@ export class Window {
   updateAllBounds(): void {
     this.updateTabBounds();
     this._sideBar.updateBounds();
+    this._tabTraceOverlay.updateBounds();
+    this._tabTraceOverlay.raiseAboveTabs();
   }
 
   // Getter for sidebar to access from main process

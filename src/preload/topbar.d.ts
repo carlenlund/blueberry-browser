@@ -7,6 +7,13 @@ interface TabInfo {
   isActive: boolean;
 }
 
+interface DebugTraceFlowResult {
+  color: "red" | "green" | "blue";
+  source: "topbar" | "sidebar";
+  module: string;
+  detail: Record<string, unknown>;
+}
+
 interface TopBarAPI {
   // Tab management
   createTab: (
@@ -28,6 +35,11 @@ interface TopBarAPI {
 
   // Sidebar
   toggleSidebar: () => Promise<void>;
+
+  traceFlow: (
+    color: "red" | "green" | "blue",
+    source: "topbar" | "sidebar"
+  ) => Promise<DebugTraceFlowResult>;
 }
 
 declare global {

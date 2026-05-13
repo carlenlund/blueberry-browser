@@ -1,6 +1,21 @@
 import { ipcMain, WebContents } from "electron";
 import type { Window } from "./Window";
 
+export type DebugTraceColor = "red" | "green" | "blue";
+export type DebugTraceSource = "topbar" | "sidebar" | "overlay";
+
+export interface DebugTraceFlowPayload {
+  color: DebugTraceColor;
+  source: DebugTraceSource;
+}
+
+export interface DebugTraceFlowResult {
+  color: DebugTraceColor;
+  source: DebugTraceSource;
+  module: string;
+  detail: Record<string, unknown>;
+}
+
 export class EventManager {
   private mainWindow: Window;
 
@@ -221,6 +236,73 @@ export class EventManager {
   private handleDebugEvents(): void {
     // Ping test
     ipcMain.on("ping", () => console.log("pong"));
+
+    ipcMain.handle(
+      "debug-trace-flow",
+      (_, payload: DebugTraceFlowPayload): DebugTraceFlowResult => {
+        return this.runDebugTrace(payload);
+      }
+    );
+  }
+
+  private runDebugTrace(
+    payload: DebugTraceFlowPayload
+  ): DebugTraceFlowResult {
+    const { color, source } = payload;
+    const prefix = `[TRACE:main] from=${source} color=${color}`;
+
+    switch (color) {
+      case "red": {
+        const bounds = this.mainWindow.getBounds();
+        const tabCount = this.mainWindow.tabCount;
+        const title = this.mainWindow.baseWindow.getTitle();
+        console.log(
+          `${prefix} -> Window module`,
+          JSON.stringify({ tabCount, title, bounds })
+        );
+        return {
+          color,
+          source,
+          module: "Window",
+          detail: { tabCount, title, bounds },
+        };
+      }
+      case "green": {
+        const tab = this.mainWindow.activeTab;
+        const detail: Record<string, unknown> = tab
+          ? {
+              tabId: tab.id,
+              url: tab.url,
+              title: tab.title,
+              canGoBack: tab.webContents.canGoBack(),
+              canGoForward: tab.webContents.canGoForward(),
+            }
+          : { tabId: null };
+        console.log(`${prefix} -> Tab module`, JSON.stringify(detail));
+        return {
+          color,
+          source,
+          module: "Tab",
+          detail,
+        };
+      }
+      case "blue": {
+        const sidebarVisible = this.mainWindow.sidebar.getIsVisible();
+        const messageCount =
+          this.mainWindow.sidebar.client.getMessages().length;
+        const detail = { sidebarVisible, chatMessageCount: messageCount };
+        console.log(
+          `${prefix} -> SideBar + LLMClient`,
+          JSON.stringify(detail)
+        );
+        return {
+          color,
+          source,
+          module: "SideBar+LLMClient",
+          detail,
+        };
+      }
+    }
   }
 
   private broadcastDarkMode(sender: WebContents, isDarkMode: boolean): void {

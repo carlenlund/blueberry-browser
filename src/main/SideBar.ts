@@ -49,12 +49,12 @@ export class SideBar {
   private setupBounds(): void {
     if (!this.isVisible) return;
 
-    const bounds = this.baseWindow.getBounds();
+    const [contentWidth, contentHeight] = this.baseWindow.getContentSize();
     this.webContentsView.setBounds({
-      x: bounds.width - 400, // 400px width sidebar on the right
+      x: contentWidth - 400, // 400px width sidebar on the right
       y: 88, // Start below the topbar
       width: 400,
-      height: bounds.height - 88, // Subtract topbar height
+      height: contentHeight - 88, // Subtract topbar height
     });
   }
 

@@ -41,11 +41,11 @@ export class TopBar {
   }
 
   private setupBounds(): void {
-    const bounds = this.baseWindow.getBounds();
+    const [contentWidth] = this.baseWindow.getContentSize();
     this.webContentsView.setBounds({
       x: 0,
       y: 0,
-      width: bounds.width,
+      width: contentWidth,
       height: 88, // Fixed height for topbar (40px tabs + 48px address bar)
     });
   }

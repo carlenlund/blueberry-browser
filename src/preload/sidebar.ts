@@ -52,6 +52,9 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
+
+  traceFlow: (color: "red" | "green" | "blue", source: "topbar" | "sidebar") =>
+    electronAPI.ipcRenderer.invoke("debug-trace-flow", { color, source }),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

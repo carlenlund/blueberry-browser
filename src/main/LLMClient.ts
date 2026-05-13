@@ -1,4 +1,5 @@
 import { WebContents } from "electron";
+import { existsSync } from "fs";
 import { streamText, type LanguageModel, type CoreMessage } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
@@ -6,8 +7,20 @@ import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
 
-// Load environment variables from .env file
-dotenv.config({ path: join(__dirname, "../../.env") });
+// Load .env from project root (dev: out/main -> ../.. ; or cwd when running electron-vite)
+(() => {
+  const candidates = [
+    join(__dirname, "../../.env"),
+    join(process.cwd(), ".env"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      dotenv.config({ path: p });
+      return;
+    }
+  }
+  dotenv.config();
+})();
 
 interface ChatRequest {
   message: string;
@@ -166,12 +179,48 @@ export class LLMClient {
     this.sendMessagesToRenderer();
   }
 
-  getMessages(): CoreMessage[] {
-    return this.messages;
+  /** Plain-text messages for IPC (never embed screenshots — large payloads break updates). */
+  getMessages(): Array<{ role: string; content: string }> {
+    return this.messagesForRenderer();
+  }
+
+  private textFromUserContent(content: CoreMessage["content"]): string {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    for (const part of content) {
+      if (
+        typeof part === "object" &&
+        part !== null &&
+        (part as { type?: string }).type === "text" &&
+        "text" in part
+      ) {
+        return String((part as { text: string }).text);
+      }
+    }
+    return "";
+  }
+
+  private messagesForRenderer(): Array<{ role: string; content: string }> {
+    return this.messages.map((msg) => {
+      if (msg.role === "user") {
+        return {
+          role: "user",
+          content: this.textFromUserContent(msg.content),
+        };
+      }
+      if (msg.role === "assistant") {
+        const c = msg.content;
+        return {
+          role: "assistant",
+          content: typeof c === "string" ? c : "",
+        };
+      }
+      return { role: msg.role, content: "" };
+    });
   }
 
   private sendMessagesToRenderer(): void {
-    this.webContents.send("chat-messages-updated", this.messages);
+    this.webContents.send("chat-messages-updated", this.messagesForRenderer());
   }
 
   private async prepareMessagesWithContext(_request: ChatRequest): Promise<CoreMessage[]> {
@@ -259,20 +308,30 @@ export class LLMClient {
   ): Promise<void> {
     let accumulatedText = "";
 
-    // Create a placeholder assistant message
     const assistantMessage: CoreMessage = {
       role: "assistant",
       content: "",
     };
-    
-    // Keep track of the index for updates
+
     const messageIndex = this.messages.length;
     this.messages.push(assistantMessage);
 
-    for await (const chunk of textStream) {
-      accumulatedText += chunk;
+    try {
+      for await (const chunk of textStream) {
+        accumulatedText += chunk;
 
-      // Update assistant message content
+        this.messages[messageIndex] = {
+          role: "assistant",
+          content: accumulatedText,
+        };
+        this.sendMessagesToRenderer();
+
+        this.sendStreamChunk(messageId, {
+          content: chunk,
+          isComplete: false,
+        });
+      }
+
       this.messages[messageIndex] = {
         role: "assistant",
         content: accumulatedText,
@@ -280,23 +339,12 @@ export class LLMClient {
       this.sendMessagesToRenderer();
 
       this.sendStreamChunk(messageId, {
-        content: chunk,
-        isComplete: false,
+        content: accumulatedText,
+        isComplete: true,
       });
+    } catch (err) {
+      this.handleStreamError(err, messageId);
     }
-
-    // Final update with complete content
-    this.messages[messageIndex] = {
-      role: "assistant",
-      content: accumulatedText,
-    };
-    this.sendMessagesToRenderer();
-
-    // Send the final complete signal
-    this.sendStreamChunk(messageId, {
-      content: accumulatedText,
-      isComplete: true,
-    });
   }
 
   private handleStreamError(error: unknown, messageId: string): void {
@@ -333,10 +381,32 @@ export class LLMClient {
       return "Request timeout: The service took too long to respond. Please try again.";
     }
 
-    return "Sorry, I encountered an error while processing your request. Please try again.";
+    if (
+      message.includes("not found") ||
+      message.includes("does not exist") ||
+      message.includes("invalid_model")
+    ) {
+      return "Model or endpoint error. Check LLM_MODEL in .env or your provider dashboard.";
+    }
+
+    return `Sorry, something went wrong: ${error.message.slice(0, 200)}`;
   }
 
   private sendErrorMessage(messageId: string, errorMessage: string): void {
+    const last = this.messages[this.messages.length - 1];
+    if (last?.role === "assistant") {
+      this.messages[this.messages.length - 1] = {
+        role: "assistant",
+        content: errorMessage,
+      };
+    } else {
+      this.messages.push({
+        role: "assistant",
+        content: errorMessage,
+      });
+    }
+
+    this.sendMessagesToRenderer();
     this.sendStreamChunk(messageId, {
       content: errorMessage,
       isComplete: true,
