@@ -1,6 +1,32 @@
 import { ipcMain, WebContents } from "electron";
 import type { Window } from "./Window";
 
+/** ipcMain.handle channels registered by this class (for teardown without removeAllListeners). */
+const IPC_MAIN_HANDLE_CHANNELS = [
+  "create-tab",
+  "close-tab",
+  "switch-tab",
+  "get-tabs",
+  "navigate-to",
+  "navigate-tab",
+  "go-back",
+  "go-forward",
+  "reload",
+  "tab-go-back",
+  "tab-go-forward",
+  "tab-reload",
+  "tab-screenshot",
+  "tab-run-js",
+  "get-active-tab-info",
+  "toggle-sidebar",
+  "sidebar-chat-message",
+  "sidebar-clear-chat",
+  "sidebar-get-messages",
+  "get-page-content",
+  "get-page-text",
+  "get-current-url",
+] as const;
+
 export class EventManager {
   private mainWindow: Window;
 
@@ -248,8 +274,12 @@ export class EventManager {
     });
   }
 
-  // Clean up event listeners
+  /** Remove handlers so a new EventManager can register (e.g. macOS activate). */
   public cleanup(): void {
-    ipcMain.removeAllListeners();
+    for (const channel of IPC_MAIN_HANDLE_CHANNELS) {
+      ipcMain.removeHandler(channel);
+    }
+    ipcMain.removeAllListeners("dark-mode-changed");
+    ipcMain.removeAllListeners("ping");
   }
 }

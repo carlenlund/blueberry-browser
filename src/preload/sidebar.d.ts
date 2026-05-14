@@ -2,12 +2,12 @@ import { ElectronAPI } from "@electron-toolkit/preload";
 
 interface ChatRequest {
   message: string;
-  context: {
+  messageId: string;
+  context?: {
     url: string | null;
     content: string | null;
     text: string | null;
   };
-  messageId: string;
 }
 
 interface ChatResponse {
@@ -16,26 +16,32 @@ interface ChatResponse {
   isComplete: boolean;
 }
 
-interface TabInfo {
+interface RunConfirmedScriptResult {
+  ok: boolean;
+  display: string;
+}
+
+interface ActiveTabInfo {
   id: string;
   title: string;
   url: string;
-  isActive: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
 }
 
 interface SidebarAPI {
-  // Chat functionality
-  sendChatMessage: (request: ChatRequest) => Promise<void>;
+  sendChatMessage: (request: Partial<ChatRequest>) => Promise<void>;
+  clearChat: () => Promise<boolean>;
+  getMessages: () => Promise<unknown[]>;
   onChatResponse: (callback: (data: ChatResponse) => void) => void;
+  onMessagesUpdated: (callback: (messages: unknown[]) => void) => void;
   removeChatResponseListener: () => void;
-
-  // Page content access
+  removeMessagesUpdatedListener: () => void;
+  runConfirmedScript?: (code: string) => Promise<RunConfirmedScriptResult>;
   getPageContent: () => Promise<string | null>;
   getPageText: () => Promise<string | null>;
   getCurrentUrl: () => Promise<string | null>;
-
-  // Tab information
-  getActiveTabInfo: () => Promise<TabInfo | null>;
+  getActiveTabInfo: () => Promise<ActiveTabInfo | null>;
 }
 
 declare global {
@@ -44,4 +50,3 @@ declare global {
     sidebarAPI: SidebarAPI;
   }
 }
-

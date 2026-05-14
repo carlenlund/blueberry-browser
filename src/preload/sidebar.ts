@@ -31,7 +31,7 @@ const sidebarAPI = {
     electronAPI.ipcRenderer.on("chat-response", (_, data) => callback(data));
   },
 
-  onMessagesUpdated: (callback: (messages: any[]) => void) => {
+  onMessagesUpdated: (callback: (messages: unknown[]) => void) => {
     electronAPI.ipcRenderer.on("chat-messages-updated", (_, messages) =>
       callback(messages)
     );
@@ -52,6 +52,9 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
+
+  runConfirmedScript: (code: string) =>
+    electronAPI.ipcRenderer.invoke("sidebar-run-confirmed-script", code),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

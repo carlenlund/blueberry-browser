@@ -1,22 +1,20 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import { ArrowUp, Square, Sparkles, Plus } from 'lucide-react'
+import { ArrowUp, Plus, Copy, Play } from 'lucide-react'
 import { useChat } from '../contexts/ChatContext'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
-
-interface Message {
-    id: string
-    role: 'user' | 'assistant'
-    content: string
-    timestamp: number
-    isStreaming?: boolean
-}
+import { extractFirstFencedJavaScript } from '../lib/extractFencedJs'
+import { invokeRunConfirmedScript } from '../lib/invokeRunConfirmedScript'
+import { PromptChips } from './PromptChips'
+import type { ChatSidebarMessage } from '../types/chat'
 
 // Auto-scroll hook
-const useAutoScroll = (messages: Message[]) => {
+const useAutoScroll = (
+    messages: ChatSidebarMessage[]
+): React.RefObject<HTMLDivElement | null> => {
     const scrollRef = useRef<HTMLDivElement>(null)
     const prevCount = useRef(0)
 
@@ -59,6 +57,7 @@ const StreamingText: React.FC<{ content: string }> = ({ content }) => {
             }, 10)
             return () => clearTimeout(timer)
         }
+        return undefined
     }, [content, currentIndex])
 
     return (
@@ -86,7 +85,7 @@ const Markdown: React.FC<{ content: string }> = ({ content }) => (
             remarkPlugins={[remarkGfm, remarkBreaks]}
             components={{
                 // Custom code block styling
-                code: ({ node, className, children, ...props }) => {
+                code: ({ className, children, ...props }) => {
                     const inline = !className
                     return inline ? (
                         <code className="bg-muted dark:bg-muted/50 px-1 py-0.5 rounded text-sm text-foreground" {...props}>
@@ -169,7 +168,7 @@ const ChatInput: React.FC<{
         }
     }, [value])
 
-    const handleSubmit = () => {
+    const handleSubmit = (): void => {
         if (value.trim() && !disabled) {
             onSend(value.trim())
             setValue('')
@@ -180,7 +179,7 @@ const ChatInput: React.FC<{
         }
     }
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
+    const handleKeyDown = (e: React.KeyboardEvent): void => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             handleSubmit()
@@ -237,8 +236,8 @@ const ChatInput: React.FC<{
 
 // Conversation Turn Component
 interface ConversationTurn {
-    user?: Message
-    assistant?: Message
+    user?: ChatSidebarMessage
+    assistant?: ChatSidebarMessage
 }
 
 const ConversationTurnComponent: React.FC<{
@@ -266,6 +265,59 @@ export const Chat: React.FC = () => {
     const { messages, isLoading, sendMessage, clearChat } = useChat()
     const scrollRef = useAutoScroll(messages)
 
+    const [pendingScript, setPendingScript] = useState<{
+        code: string
+        messageIndex: number
+    } | null>(null)
+    const [executionResult, setExecutionResult] = useState<string | null>(null)
+    const [runningScript, setRunningScript] = useState(false)
+    const lastParsedAssistantIndex = useRef<number | null>(null)
+
+    useEffect(() => {
+        if (isLoading) {
+            setPendingScript(null)
+            setExecutionResult(null)
+            lastParsedAssistantIndex.current = null
+            return
+        }
+        const lastIdx = messages.length - 1
+        const last = messages[lastIdx]
+        if (!last || last.role !== 'assistant') {
+            return
+        }
+        if (lastParsedAssistantIndex.current === lastIdx) {
+            return
+        }
+        lastParsedAssistantIndex.current = lastIdx
+        const code = extractFirstFencedJavaScript(last.content)
+        if (code) {
+            setPendingScript({ code, messageIndex: lastIdx })
+        } else {
+            setPendingScript(null)
+        }
+    }, [messages, isLoading])
+
+    const handleConfirmRun = useCallback(async (): Promise<void> => {
+        if (!pendingScript?.code) return
+        setRunningScript(true)
+        try {
+            const res = await invokeRunConfirmedScript(pendingScript.code)
+            setExecutionResult(res.display)
+            setPendingScript(null)
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setExecutionResult(`Error:\n${msg}`);
+            setPendingScript(null);
+        } finally {
+            setRunningScript(false)
+        }
+    }, [pendingScript])
+
+    const copyResult = useCallback((): void => {
+        if (executionResult == null) return
+        void navigator.clipboard.writeText(executionResult)
+    }, [executionResult])
+
     // Group messages into conversation turns
     const conversationTurns: ConversationTurn[] = []
     for (let i = 0; i < messages.length; i++) {
@@ -273,75 +325,122 @@ export const Chat: React.FC = () => {
             const turn: ConversationTurn = { user: messages[i] }
             if (messages[i + 1]?.role === 'assistant') {
                 turn.assistant = messages[i + 1]
-                i++ // Skip next message since we've paired it
+                i++
             }
             conversationTurns.push(turn)
-        } else if (messages[i].role === 'assistant' &&
-            (i === 0 || messages[i - 1]?.role !== 'user')) {
-            // Handle standalone assistant messages
+        } else if (
+            messages[i].role === 'assistant' &&
+            (i === 0 || messages[i - 1]?.role !== 'user')
+        ) {
             conversationTurns.push({ assistant: messages[i] })
         }
     }
 
-    // Check if we need to show loading after the last turn
-    const showLoadingAfterLastTurn = isLoading &&
-        messages[messages.length - 1]?.role === 'user'
+    const showLoadingAfterLastTurn =
+        isLoading && messages[messages.length - 1]?.role === 'user'
 
     return (
-        <div className="flex flex-col h-full bg-background">
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto">
-                <div className="h-8 max-w-3xl mx-auto px-4">
-                    {/* New Chat Button - Floating */}
-                    {messages.length > 0 && (
-                        <Button
-                            onClick={clearChat}
-                            title="Start new chat"
-                            variant="ghost"
-                        >
-                            <Plus className="size-4" />
-                            New Chat
-                        </Button>
-                    )}
-                </div>
+        <div className="flex flex-col h-full bg-background min-h-0">
+            <PromptChips onSelect={sendMessage} disabled={isLoading} />
 
-                <div className="pb-4 relative max-w-3xl mx-auto px-4">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                <div className="flex-1 overflow-y-auto">
+                    <div className="h-8 max-w-3xl mx-auto px-4">
+                        {messages.length > 0 && (
+                            <Button
+                                onClick={clearChat}
+                                title="Start new chat"
+                                variant="ghost"
+                            >
+                                <Plus className="size-4" />
+                                New Chat
+                            </Button>
+                        )}
+                    </div>
 
-                    {messages.length === 0 ? (
-                        // Empty State
-                        <div className="flex items-center justify-center h-full min-h-[400px]">
-                            <div className="text-center animate-fade-in max-w-md mx-auto gap-2 flex flex-col">
-                                <h3 className="text-2xl font-bold">🫐</h3>
-                                <p className="text-muted-foreground text-sm">
-                                    Press ⌘E to toggle the sidebar
-                                </p>
+                    <div className="pb-4 relative max-w-3xl mx-auto px-4">
+                        {messages.length === 0 ? (
+                            <div className="flex items-center justify-center h-full min-h-[280px]">
+                                <div className="text-center animate-fade-in max-w-md mx-auto gap-2 flex flex-col">
+                                    <h3 className="text-2xl font-bold">🫐</h3>
+                                    <p className="text-muted-foreground text-sm">
+                                        Pick a prompt above or type below. The model replies
+                                        with JavaScript—confirm before it runs in the active tab.
+                                    </p>
+                                    <p className="text-muted-foreground text-xs">
+                                        Press ⌘E to toggle the sidebar
+                                    </p>
+                                </div>
                             </div>
-                        </div>
-                    ) : (
-                        <>
+                        ) : (
+                            <>
+                                {conversationTurns.map((turn, index) => (
+                                    <ConversationTurnComponent
+                                        key={`turn-${index}`}
+                                        turn={turn}
+                                        isLoading={
+                                            showLoadingAfterLastTurn &&
+                                            index === conversationTurns.length - 1
+                                        }
+                                    />
+                                ))}
+                            </>
+                        )}
 
-                            {/* Render conversation turns */}
-                            {conversationTurns.map((turn, index) => (
-                                <ConversationTurnComponent
-                                    key={`turn-${index}`}
-                                    turn={turn}
-                                    isLoading={
-                                        showLoadingAfterLastTurn &&
-                                        index === conversationTurns.length - 1
-                                    }
-                                />
-                            ))}
-                        </>
-                    )}
-
-                    {/* Scroll anchor */}
-                    <div ref={scrollRef} />
+                        <div ref={scrollRef} />
+                    </div>
                 </div>
-            </div>
 
-            {/* Input Area */}
-            <div className="p-4">
-                <ChatInput onSend={sendMessage} disabled={isLoading} />
+                {pendingScript && (
+                    <div className="shrink-0 border-t border-border bg-muted/20 dark:bg-muted/10 px-4 py-3 max-w-3xl mx-auto w-full space-y-2">
+                        <p className="text-xs font-medium text-foreground">
+                            Pending script — review before running in the active tab
+                        </p>
+                        <pre className="text-[11px] leading-snug max-h-32 overflow-auto rounded-md border border-border bg-background p-2 whitespace-pre-wrap break-all">
+                            {pendingScript.code}
+                        </pre>
+                        <Button
+                            type="button"
+                            size="sm"
+                            disabled={runningScript}
+                            onClick={() => void handleConfirmRun()}
+                            className="gap-1.5"
+                        >
+                            <Play className="size-3.5" />
+                            {runningScript ? 'Running…' : 'Confirm & run'}
+                        </Button>
+                    </div>
+                )}
+
+                {executionResult !== null && (
+                    <div className="shrink-0 border-t border-border px-4 py-3 max-w-3xl mx-auto w-full space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-medium text-foreground">
+                                Page script result
+                            </p>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1 text-xs"
+                                onClick={copyResult}
+                            >
+                                <Copy className="size-3" />
+                                Copy
+                            </Button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                            Paste this back into the chat to continue the conversation.
+                        </p>
+                        <pre className="text-[11px] leading-snug max-h-40 overflow-auto rounded-md border border-border bg-muted/30 dark:bg-muted/20 p-2 whitespace-pre-wrap break-words font-mono">
+                            {executionResult}
+                        </pre>
+                    </div>
+                )}
+
+                <div className="p-4 shrink-0">
+                    <ChatInput onSend={sendMessage} disabled={isLoading} />
+                </div>
             </div>
         </div>
     )

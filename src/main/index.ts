@@ -3,6 +3,10 @@ import { electronApp } from "@electron-toolkit/utils";
 import { Window } from "./Window";
 import { AppMenu } from "./Menu";
 import { EventManager } from "./EventManager";
+import {
+  registerConfirmedScriptIpc,
+  setConfirmedScriptWindowAccessor,
+} from "./confirmedScriptIpc";
 
 let mainWindow: Window | null = null;
 let eventManager: EventManager | null = null;
@@ -12,6 +16,9 @@ const createWindow = (): Window => {
   const window = new Window();
   menu = new AppMenu(window);
   eventManager = new EventManager(window);
+  mainWindow = window;
+  setConfirmedScriptWindowAccessor(() => mainWindow);
+  registerConfirmedScriptIpc();
   return window;
 };
 
@@ -30,6 +37,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  setConfirmedScriptWindowAccessor(() => null);
   if (eventManager) {
     eventManager.cleanup();
     eventManager = null;
