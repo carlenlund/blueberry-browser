@@ -6,6 +6,7 @@ import { ArrowUp, Square, Sparkles, Plus } from 'lucide-react'
 import { useChat } from '../contexts/ChatContext'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
+import { DebugButtons } from './DebugButtons'
 
 interface Message {
     id: string
@@ -288,7 +289,7 @@ export const Chat: React.FC = () => {
         messages[messages.length - 1]?.role === 'user'
 
     return (
-        <div className="flex flex-col h-full bg-background">
+        <div className="h-full flex flex-col bg-background">
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto">
                 <div className="h-8 max-w-3xl mx-auto px-4">
@@ -309,7 +310,7 @@ export const Chat: React.FC = () => {
 
                     {messages.length === 0 ? (
                         // Empty State
-                        <div className="flex items-center justify-center h-full min-h-[400px]">
+                        <div className="flex items-center justify-center h-full">
                             <div className="text-center animate-fade-in max-w-md mx-auto gap-2 flex flex-col">
                                 <h3 className="text-2xl font-bold">🫐</h3>
                                 <p className="text-muted-foreground text-sm">
@@ -343,20 +344,6 @@ export const Chat: React.FC = () => {
             <div className="p-4">
                 <ChatInput onSend={sendMessage} disabled={isLoading} />
             </div>
-
-            {/* Debug Actions (only when running `npm run debug`) */}
-            {import.meta.env.MODE === 'debug' && (
-                <div className="p-4">
-                    <Button onClick={async () => {
-                        const tabInfo = await window.sidebarAPI.getActiveTabInfo();
-                        if (tabInfo) {
-                            window.sidebarAPI.tabRunJs(tabInfo.id, 'alert("Hello, world!")')
-                        }
-                    }}>
-                        Run JavaScript
-                    </Button>
-                </div>
-            )}
         </div>
     )
 }
