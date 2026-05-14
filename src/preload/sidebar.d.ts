@@ -36,6 +36,9 @@ interface SidebarAPI {
 
   // Tab information
   getActiveTabInfo: () => Promise<TabInfo | null>;
+
+  // Tab actions
+  tabRunJs: (tabId: string, code: string) => Promise<any>;
 }
 
 declare global {

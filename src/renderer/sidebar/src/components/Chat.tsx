@@ -343,6 +343,20 @@ export const Chat: React.FC = () => {
             <div className="p-4">
                 <ChatInput onSend={sendMessage} disabled={isLoading} />
             </div>
+
+            {/* Debug Actions (only when running `npm run debug`) */}
+            {import.meta.env.MODE === 'debug' && (
+                <div className="p-4">
+                    <Button onClick={async () => {
+                        const tabInfo = await window.sidebarAPI.getActiveTabInfo();
+                        if (tabInfo) {
+                            window.sidebarAPI.tabRunJs(tabInfo.id, 'alert("Hello, world!")')
+                        }
+                    }}>
+                        Run JavaScript
+                    </Button>
+                </div>
+            )}
         </div>
     )
 }
