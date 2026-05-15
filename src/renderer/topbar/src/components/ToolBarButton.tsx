@@ -9,6 +9,8 @@ interface ToolBarButtonProps {
     onClick?: () => void;
     children?: React.ReactNode;
     className?: string;
+    title?: string;
+    'aria-label'?: string;
 }
 
 export const ToolBarButton: React.FC<ToolBarButtonProps> = ({
@@ -18,9 +20,14 @@ export const ToolBarButton: React.FC<ToolBarButtonProps> = ({
     onClick,
     children,
     className,
+    title,
+    'aria-label': ariaLabel,
 }) => {
     return (
         <div
+            role="button"
+            title={title}
+            aria-label={ariaLabel}
             className={cn(
                 "size-8 flex items-center justify-center rounded-md",
                 "text-secondary-foreground app-region-no-drag",

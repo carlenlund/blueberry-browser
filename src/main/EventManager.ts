@@ -1,5 +1,9 @@
-import { ipcMain, WebContents } from "electron";
+import { ipcMain, nativeTheme, WebContents } from "electron";
 import type { Window } from "./Window";
+import { domMapDiskCache } from "./DomMapDiskCache";
+import { domMapCacheKey } from "../shared/domMapCacheKeys";
+import { normalizeQuickOpenInput } from "../shared/navigateQuickOpen";
+import type { FeedOverlayPageAgentInvokeResult } from "../shared/feedOverlayPageAgentPrompt";
 
 export class EventManager {
   private mainWindow: Window;
@@ -55,11 +59,98 @@ export class EventManager {
     });
 
     // Navigation (for compatibility with existing code)
-    ipcMain.handle("navigate-to", (_, url: string) => {
-      if (this.mainWindow.activeTab) {
-        this.mainWindow.activeTab.loadURL(url);
-      }
+    ipcMain.handle("navigate-to", (_, rawUrl: string) => {
+      const trimmed = typeof rawUrl === "string" ? rawUrl.trim() : "";
+      if (!trimmed) return;
+
+      const tab = this.mainWindow.activeTab;
+      if (!tab) return;
+
+      const url = normalizeQuickOpenInput(trimmed);
+      void tab.loadURL(url).catch((e) => {
+        console.warn("[navigate-to] loadURL:", e);
+      });
     });
+
+    ipcMain.handle("quick-feed-from-url", async (_, rawUrl: string) => {
+      this.mainWindow.sidebar.client.cancelOngoingAssistantStream();
+
+      const trimmed = typeof rawUrl === "string" ? rawUrl.trim() : "";
+      if (!trimmed) {
+        return { ok: false as const, error: "Empty URL" };
+      }
+
+      const url = normalizeQuickOpenInput(trimmed);
+
+      const tab = this.mainWindow.activeTab;
+      if (!tab) return { ok: false as const, error: "No active tab" };
+
+      /** Do not `await loadURL`: its promise settles on **full** load (assets), not DOM. */
+      void tab.loadURL(url).catch((e) => {
+        console.warn("[quick-feed] loadURL:", e);
+      });
+
+      await tab.waitUntilContentReady(0);
+
+      this.mainWindow.sidebar.view.webContents.send("quick-feed-automation-run");
+      return { ok: true as const };
+    });
+
+    /** Drop cached flatten JS for this page (both hidden-structure keys), then same run as quick-feed-from-url. */
+    ipcMain.handle("quick-feed-retry-for-url", async (_, rawUrl: string) => {
+      this.mainWindow.sidebar.client.cancelOngoingAssistantStream();
+
+      const trimmed = typeof rawUrl === "string" ? rawUrl.trim() : "";
+      if (!trimmed) {
+        return { ok: false as const, error: "Empty URL" };
+      }
+
+      const url = normalizeQuickOpenInput(trimmed);
+      domMapDiskCache.forgetFlatten(domMapCacheKey(url, false));
+      domMapDiskCache.forgetFlatten(domMapCacheKey(url, true));
+
+      const tab = this.mainWindow.activeTab;
+      if (!tab) return { ok: false as const, error: "No active tab" };
+
+      void tab.loadURL(url).catch((e) => {
+        console.warn("[quick-feed-retry] loadURL:", e);
+      });
+
+      await tab.waitUntilContentReady(0);
+
+      this.mainWindow.sidebar.view.webContents.send("quick-feed-automation-run");
+      return { ok: true as const };
+    });
+
+    ipcMain.handle(
+      "feed-overlay-page-agent",
+      async (_, goal: string): Promise<FeedOverlayPageAgentInvokeResult> => {
+        const g = typeof goal === "string" ? goal : "";
+        return this.mainWindow.sidebar.client.runFeedOverlayPageAgent(g);
+      },
+    );
+
+    ipcMain.handle("feed-overlay-active-tab-url", () => {
+      const tab = this.mainWindow.activeTab;
+      const u = tab?.url;
+      return typeof u === "string" && u.trim() ? u.trim() : null;
+    });
+
+    ipcMain.handle(
+      "wait-active-tab-content-ready",
+      async (_, opts?: { settleMs?: number }) => {
+        const tab = this.mainWindow.activeTab;
+        if (!tab) {
+          return { ok: false as const, error: "No active tab" };
+        }
+        const settle =
+          opts != null && typeof opts.settleMs === "number"
+            ? opts.settleMs
+            : 0;
+        await tab.waitUntilContentReady(settle);
+        return { ok: true as const };
+      },
+    );
 
     ipcMain.handle("navigate-tab", async (_, tabId: string, url: string) => {
       const tab = this.mainWindow.getTab(tabId);
@@ -157,6 +248,15 @@ export class EventManager {
       return true;
     });
 
+    ipcMain.handle("get-feed-layout-overlay-enabled", () => {
+      return this.mainWindow.feedLayoutOverlayEnabled;
+    });
+
+    ipcMain.handle("set-feed-layout-overlay-enabled", (_, enabled: unknown) => {
+      this.mainWindow.setFeedLayoutOverlayEnabled(!!enabled);
+      return true;
+    });
+
     // Chat message
     ipcMain.handle("sidebar-chat-message", async (_, request) => {
       // The LLMClient now handles getting the screenshot and context directly
@@ -173,6 +273,47 @@ export class EventManager {
     ipcMain.handle("sidebar-get-messages", () => {
       return this.mainWindow.sidebar.client.getMessages();
     });
+
+    ipcMain.handle(
+      "set-main-area-feed-mode",
+      async (_, payload: { show: boolean; payloadJson?: string }) => {
+        if (payload?.show && payload.payloadJson) {
+          await this.mainWindow.setMainAreaFeedMode(
+            true,
+            payload.payloadJson,
+          );
+        } else {
+          await this.mainWindow.setMainAreaFeedMode(false);
+        }
+        return true;
+      },
+    );
+
+    ipcMain.handle(
+      "dom-map-cache-peek-flatten",
+      (_, payload: { url: string; includeHidden: boolean }) => {
+        const key = domMapCacheKey(payload.url, payload.includeHidden);
+        return domMapDiskCache.peekFlatten(key);
+      },
+    );
+
+    ipcMain.handle(
+      "dom-map-cache-remember-flatten",
+      (_, payload: { url: string; includeHidden: boolean; script: string }) => {
+        const key = domMapCacheKey(payload.url, payload.includeHidden);
+        domMapDiskCache.rememberFlatten(key, payload.script);
+        return true;
+      },
+    );
+
+    ipcMain.handle(
+      "dom-map-cache-forget-flatten",
+      (_, payload: { url: string; includeHidden: boolean }) => {
+        const key = domMapCacheKey(payload.url, payload.includeHidden);
+        domMapDiskCache.forgetFlatten(key);
+        return true;
+      },
+    );
   }
 
   private handlePageContentEvents(): void {
@@ -224,11 +365,15 @@ export class EventManager {
   }
 
   private broadcastDarkMode(sender: WebContents, isDarkMode: boolean): void {
+    const isDark = !!isDarkMode;
+    nativeTheme.themeSource = isDark ? "dark" : "light";
+    this.mainWindow.setAppUsesDarkUiFromChrome(isDark);
+
     // Send to topbar
     if (this.mainWindow.topBar.view.webContents !== sender) {
       this.mainWindow.topBar.view.webContents.send(
         "dark-mode-updated",
-        isDarkMode
+        isDark
       );
     }
 
@@ -236,14 +381,14 @@ export class EventManager {
     if (this.mainWindow.sidebar.view.webContents !== sender) {
       this.mainWindow.sidebar.view.webContents.send(
         "dark-mode-updated",
-        isDarkMode
+        isDark
       );
     }
 
     // Send to all tabs
     this.mainWindow.allTabs.forEach((tab) => {
       if (tab.webContents !== sender) {
-        tab.webContents.send("dark-mode-updated", isDarkMode);
+        tab.webContents.send("dark-mode-updated", isDark);
       }
     });
   }

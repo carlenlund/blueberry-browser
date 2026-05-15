@@ -79,6 +79,19 @@
   .app-region-no-drag {
     -webkit-app-region: no-drag;
   }
+
+  /**
+   * Frameless `titleBarOverlay` windows: reserve the OS caption-button band on the
+   * trailing edge (Windows/Linux). Falls back to 0.5rem when env() is unavailable.
+   */
+  .topbar-wco-trailing {
+    padding-right: max(
+      0.5rem,
+      calc(
+        100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)
+      )
+    );
+  }
 }
 
 #root {

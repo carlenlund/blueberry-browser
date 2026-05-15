@@ -112,6 +112,9 @@ release-builds/
 logs/
 *.log
 
+# Blueberry local flatten-script cache (dev: .blueberry/dom-map-cache.json)
+.blueberry/
+
 # Cache directories
 .cache/
 .parcel-cache/

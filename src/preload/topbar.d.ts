@@ -28,6 +28,18 @@ interface TopBarAPI {
 
   // Sidebar
   toggleSidebar: () => Promise<void>;
+
+  quickFeedFromUrl: (
+    rawUrl: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+
+  getFeedLayoutOverlayEnabled: () => Promise<boolean>;
+  setFeedLayoutOverlayEnabled: (enabled: boolean) => Promise<unknown>;
+
+  onFeedLayoutOverlayEnabledChanged: (
+    callback: (enabled: boolean) => void,
+  ) => void;
+  removeFeedLayoutOverlayEnabledListener: () => void;
 }
 
 declare global {

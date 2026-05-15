@@ -31,6 +31,28 @@ const topBarAPI = {
   // Sidebar
   toggleSidebar: () =>
     electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+
+  quickFeedFromUrl: (url: string) =>
+    electronAPI.ipcRenderer.invoke("quick-feed-from-url", url),
+
+  getFeedLayoutOverlayEnabled: (): Promise<boolean> =>
+    electronAPI.ipcRenderer.invoke("get-feed-layout-overlay-enabled"),
+
+  setFeedLayoutOverlayEnabled: (enabled: boolean) =>
+    electronAPI.ipcRenderer.invoke("set-feed-layout-overlay-enabled", enabled),
+
+  onFeedLayoutOverlayEnabledChanged: (callback: (enabled: boolean) => void) => {
+    electronAPI.ipcRenderer.on(
+      "feed-layout-overlay-enabled-changed",
+      (_event, enabled: unknown) => callback(!!enabled),
+    );
+  },
+
+  removeFeedLayoutOverlayEnabledListener: () => {
+    electronAPI.ipcRenderer.removeAllListeners(
+      "feed-layout-overlay-enabled-changed",
+    );
+  },
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

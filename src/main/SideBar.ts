@@ -7,13 +7,13 @@ export class SideBar {
   private webContentsView: WebContentsView;
   private baseWindow: BaseWindow;
   private llmClient: LLMClient;
-  private isVisible: boolean = true;
+  private isVisible: boolean = false;
 
   constructor(baseWindow: BaseWindow) {
     this.baseWindow = baseWindow;
     this.webContentsView = this.createWebContentsView();
     baseWindow.contentView.addChildView(this.webContentsView);
-    this.setupBounds();
+    this.hide();
 
     // Initialize LLM client
     this.llmClient = new LLMClient(this.webContentsView.webContents);
@@ -49,7 +49,7 @@ export class SideBar {
   private setupBounds(): void {
     if (!this.isVisible) return;
 
-    const bounds = this.baseWindow.getBounds();
+    const bounds = this.baseWindow.getContentBounds();
     this.webContentsView.setBounds({
       x: bounds.width - 400, // 400px width sidebar on the right
       y: 88, // Start below the topbar

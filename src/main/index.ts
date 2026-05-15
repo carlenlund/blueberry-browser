@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeTheme } from "electron";
 import { electronApp } from "@electron-toolkit/utils";
 import { Window } from "./Window";
 import { AppMenu } from "./Menu";
@@ -17,6 +17,8 @@ const createWindow = (): Window => {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId("com.electron");
+
+  nativeTheme.themeSource = "dark";
 
   mainWindow = createWindow();
 

@@ -2,11 +2,19 @@ import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import { ArrowUp, Square, Sparkles, Plus } from 'lucide-react'
+import { ArrowUp, Plus, Trash2, Code2, Check } from 'lucide-react'
 import { useChat } from '../contexts/ChatContext'
+import { useSidebarPanel } from '../contexts/SidebarPanelContext'
+import {
+    extractJsonFromAssistantMessage,
+    extractJavascriptFromAssistantMessage,
+    finalizeDomMapOverlayFromDomMapAndScript,
+    stripFlattenedSummaries,
+    runDomMapFlattenCallable,
+    isFlattenedDomMapPayload,
+} from '../lib/mapJsonUtils'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
-import { DebugButtons } from './DebugButtons'
 
 interface Message {
     id: string
@@ -53,13 +61,12 @@ const StreamingText: React.FC<{ content: string }> = ({ content }) => {
     const [currentIndex, setCurrentIndex] = useState(0)
 
     useEffect(() => {
-        if (currentIndex < content.length) {
-            const timer = setTimeout(() => {
-                setDisplayedContent(content.slice(0, currentIndex + 1))
-                setCurrentIndex(currentIndex + 1)
-            }, 10)
-            return () => clearTimeout(timer)
-        }
+        if (currentIndex >= content.length) return undefined
+        const timer = setTimeout(() => {
+            setDisplayedContent(content.slice(0, currentIndex + 1))
+            setCurrentIndex(currentIndex + 1)
+        }, 10)
+        return () => clearTimeout(timer)
     }, [content, currentIndex])
 
     return (
@@ -153,30 +160,32 @@ const LoadingIndicator: React.FC = () => {
 
 // Chat Input Component with pill design
 const ChatInput: React.FC<{
-    onSend: (message: string) => void
+    value: string
+    onChange: (v: string) => void
+    onSend: () => void
     disabled: boolean
-}> = ({ onSend, disabled }) => {
-    const [value, setValue] = useState('')
+    textareaRef?: React.RefObject<HTMLTextAreaElement | null>
+}> = ({ value, onChange, onSend, disabled, textareaRef }) => {
     const [isFocused, setIsFocused] = useState(false)
-    const textareaRef = useRef<HTMLTextAreaElement>(null)
+    const innerRef = useRef<HTMLTextAreaElement>(null)
+    const mergedRef = textareaRef ?? innerRef
 
     // Auto-resize textarea
     useEffect(() => {
-        if (textareaRef.current) {
-            textareaRef.current.style.height = 'auto'
-            const scrollHeight = textareaRef.current.scrollHeight
+        if (mergedRef.current) {
+            mergedRef.current.style.height = 'auto'
+            const scrollHeight = mergedRef.current.scrollHeight
             const newHeight = Math.min(scrollHeight, 200) // Max 200px
-            textareaRef.current.style.height = `${newHeight}px`
+            mergedRef.current.style.height = `${newHeight}px`
         }
     }, [value])
 
     const handleSubmit = () => {
         if (value.trim() && !disabled) {
-            onSend(value.trim())
-            setValue('')
+            onSend()
             // Reset textarea height
-            if (textareaRef.current) {
-                textareaRef.current.style.height = '24px'
+            if (mergedRef.current) {
+                mergedRef.current.style.height = '24px'
             }
         }
     }
@@ -199,9 +208,9 @@ const ChatInput: React.FC<{
                 <div className="w-full flex items-start gap-3">
                     <div className="relative flex-1 overflow-hidden">
                         <textarea
-                            ref={textareaRef}
+                            ref={mergedRef}
                             value={value}
-                            onChange={(e) => setValue(e.target.value)}
+                            onChange={(e) => onChange(e.target.value)}
                             onFocus={() => setIsFocused(true)}
                             onBlur={() => setIsFocused(false)}
                             onKeyDown={handleKeyDown}
@@ -265,7 +274,113 @@ const ConversationTurnComponent: React.FC<{
 // Main Chat Component
 export const Chat: React.FC = () => {
     const { messages, isLoading, sendMessage, clearChat } = useChat()
+    const {
+        stagedChatComposer,
+        clearStagedChatComposer,
+        requestMapJsonImport,
+        domMapJsonSnapshot,
+    } = useSidebarPanel()
+    const [composerValue, setComposerValue] = useState('')
+    const [mapApplyError, setMapApplyError] = useState<string | null>(null)
+    const composerRef = useRef<HTMLTextAreaElement>(null)
     const scrollRef = useAutoScroll(messages)
+
+    useEffect(() => {
+        if (stagedChatComposer == null) return
+        setComposerValue(stagedChatComposer)
+        clearStagedChatComposer()
+        queueMicrotask(() => {
+            composerRef.current?.focus()
+        })
+    }, [stagedChatComposer, clearStagedChatComposer])
+
+    const handleSend = () => {
+        if (composerValue.trim() && !isLoading) {
+            void sendMessage(composerValue.trim())
+            setComposerValue('')
+        }
+    }
+
+    const handleClearChat = () => {
+        setMapApplyError(null)
+        setComposerValue('')
+        void clearChat()
+    }
+
+    const applyAssistantJsonToMap = () => {
+        setMapApplyError(null)
+        const last = [...messages]
+            .reverse()
+            .find((m) => m.role === 'assistant')
+        if (!last) {
+            setMapApplyError('No assistant reply yet.')
+            return
+        }
+        const raw = extractJsonFromAssistantMessage(last.content)
+        if (!raw) {
+            setMapApplyError(
+                'No JSON found in the latest reply (expected a ```json block).',
+            )
+            return
+        }
+        try {
+            JSON.parse(raw)
+        } catch {
+            setMapApplyError('Latest JSON was invalid.')
+            return
+        }
+        requestMapJsonImport(stripFlattenedSummaries(raw))
+    }
+
+    const applyAssistantJsToMap = () => {
+        setMapApplyError(null)
+        const last = [...messages]
+            .reverse()
+            .find((m) => m.role === 'assistant')
+        if (!last) {
+            setMapApplyError('No assistant reply yet.')
+            return
+        }
+        const js = extractJavascriptFromAssistantMessage(last.content)
+        if (!js) {
+            setMapApplyError(
+                'No JavaScript found in the latest reply (expected ```javascript).',
+            )
+            return
+        }
+        const snap = domMapJsonSnapshot?.trim()
+        if (!snap) {
+            setMapApplyError(
+                'No saved DOM map — use Send to Chat or Send JS transform in Map first.',
+            )
+            return
+        }
+        let input: unknown
+        try {
+            input = JSON.parse(snap)
+        } catch {
+            setMapApplyError(
+                'Stored DOM JSON is invalid. Re-parse the page in Map.',
+            )
+            return
+        }
+        try {
+            const out = runDomMapFlattenCallable(js, input)
+            if (!isFlattenedDomMapPayload(out)) {
+                setMapApplyError(
+                    'Script return value is not recognized as blueberry-dom-map-flattened or blueberry-dom-map-overlay.',
+                )
+                return
+            }
+            finalizeDomMapOverlayFromDomMapAndScript(input, out)
+            const raw = stripFlattenedSummaries(JSON.stringify(out))
+            requestMapJsonImport(raw)
+        } catch (e) {
+            setMapApplyError(
+                e instanceof Error ? e.message : 'Could not run JavaScript.',
+            )
+        }
+    }
 
     // Group messages into conversation turns
     const conversationTurns: ConversationTurn[] = []
@@ -296,8 +411,8 @@ export const Chat: React.FC = () => {
                     {/* New Chat Button - Floating */}
                     {messages.length > 0 && (
                         <Button
-                            onClick={clearChat}
-                            title="Start new chat"
+                            onClick={handleClearChat}
+                            title="Clear chat"
                             variant="ghost"
                         >
                             <Plus className="size-4" />
@@ -341,8 +456,59 @@ export const Chat: React.FC = () => {
             </div>
 
             {/* Input Area */}
-            <div className="p-4">
-                <ChatInput onSend={sendMessage} disabled={isLoading} />
+            <div className="p-4 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={handleClearChat}
+                        disabled={
+                            messages.length === 0 &&
+                            !isLoading &&
+                            composerValue.trim() === ''
+                        }
+                        title="Clear conversation and draft"
+                    >
+                        <Trash2 className="size-3.5 shrink-0" />
+                        Clear chat
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={applyAssistantJsonToMap}
+                        title="Opens the Map tab and pastes JSON from the latest assistant reply"
+                    >
+                        <Check className="size-3.5 shrink-0" />
+                        Apply to Map
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={applyAssistantJsToMap}
+                        title="Reads ```javascript from the latest reply and runs it against the last saved DOM JSON (from Map)."
+                    >
+                        <Code2 className="size-3.5 shrink-0" />
+                        Run JS → Map
+                    </Button>
+                    {mapApplyError != null ? (
+                        <span className="text-destructive text-[11px] leading-snug">
+                            {mapApplyError}
+                        </span>
+                    ) : null}
+                </div>
+                <ChatInput
+                    value={composerValue}
+                    onChange={setComposerValue}
+                    onSend={handleSend}
+                    disabled={isLoading}
+                    textareaRef={composerRef}
+                />
             </div>
         </div>
     )

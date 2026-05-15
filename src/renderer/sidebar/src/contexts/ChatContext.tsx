@@ -14,7 +14,7 @@ interface ChatContextType {
 
     // Chat actions
     sendMessage: (content: string) => Promise<void>
-    clearChat: () => void
+    clearChat: () => Promise<void>
 
     // Page content access
     getPageContent: () => Promise<string | null>
@@ -119,7 +119,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Set up message listeners
     useEffect(() => {
-        // Listen for streaming response updates
+        // Loading state: cleared when main sends `chat-response` with isComplete
         const handleChatResponse = (data: { messageId: string; content: string; isComplete: boolean }) => {
             if (data.isComplete) {
                 setIsLoading(false)

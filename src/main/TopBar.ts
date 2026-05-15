@@ -41,7 +41,7 @@ export class TopBar {
   }
 
   private setupBounds(): void {
-    const bounds = this.baseWindow.getBounds();
+    const bounds = this.baseWindow.getContentBounds();
     this.webContentsView.setBounds({
       x: 0,
       y: 0,
