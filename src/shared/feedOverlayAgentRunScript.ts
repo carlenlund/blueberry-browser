@@ -21,14 +21,18 @@ export function isFeedOverlayAgentScriptEnvelope(
  * Wrap LLM-produced page code so syntax/runtime errors (and Promise rejections)
  * resolve to a plain object instead of rejecting `executeJavaScript` with Electron’s
  * generic “Script failed to execute” message.
+ *
+ * User code is stitched in as real source text (not `eval`), so strict pages that
+ * omit `unsafe-eval` (e.g. news.ycombinator.com) can still run agent scripts.
  */
 export function wrapFeedOverlayAgentUserScript(code: string): string {
-  const encoded = JSON.stringify(typeof code === "string" ? code : "")
+  const body = typeof code === "string" ? code : ""
   return `(function () {
   "use strict";
   try {
-    var __code = ${encoded};
-    var __result = (0, eval)(__code);
+    var __result = (
+${body}
+    );
     if (__result != null && typeof __result.then === "function") {
       return __result.then(
         function (v) {
