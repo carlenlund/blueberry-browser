@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -6,6 +6,8 @@ import { ArrowUp, Plus } from 'lucide-react'
 import { useChat } from '../contexts/ChatContext'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
+import { BlueberryLogoMark } from './BlueberryLogoMark'
+import { useChatAutoScroll } from '../hooks/useChatAutoScroll'
 
 interface Message {
     id: string
@@ -15,29 +17,9 @@ interface Message {
     isStreaming?: boolean
 }
 
-// Auto-scroll hook
-const useAutoScroll = (messages: Message[]) => {
-    const scrollRef = useRef<HTMLDivElement>(null)
-    const prevCount = useRef(0)
-
-    useLayoutEffect(() => {
-        if (messages.length > prevCount.current) {
-            setTimeout(() => {
-                scrollRef.current?.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'end'
-                })
-            }, 100)
-        }
-        prevCount.current = messages.length
-    }, [messages.length])
-
-    return scrollRef
-}
-
 // User Message Component - appears on the right
 const UserMessage: React.FC<{ content: string }> = ({ content }) => (
-    <div className="relative max-w-[85%] ml-auto animate-fade-in">
+    <div className="relative max-w-[80%] ml-auto animate-fade-in">
         <div className="bg-muted dark:bg-muted/50 rounded-3xl px-6 py-4">
             <div className="text-foreground" style={{ whiteSpace: 'pre-wrap' }}>
                 {content}
@@ -172,7 +154,7 @@ const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean; linkC
     </div>
 )
 
-// Loading Indicator with spinning star
+// Loading indicator
 const LoadingIndicator: React.FC = () => {
     const [isVisible, setIsVisible] = useState(false)
 
@@ -181,11 +163,17 @@ const LoadingIndicator: React.FC = () => {
     }, [])
 
     return (
-        <div className={cn(
-            "p-4 transition-transform duration-300 ease-in-out",
-            isVisible ? "scale-100" : "scale-0"
-        )}>
-            <span className="text-3xl animate-pulse">...</span>
+        <div
+            className={cn(
+                'p-4 transition-transform duration-300 ease-in-out',
+                isVisible ? 'scale-100' : 'scale-0'
+            )}
+        >
+            <BlueberryLogoMark
+                size={30}
+                speed={5}
+                className=""
+            />
         </div>
     )
 }
@@ -306,7 +294,7 @@ const ConversationTurnComponent: React.FC<{
 // Main Chat Component
 export const Chat: React.FC = () => {
     const { messages, isLoading, sendMessage, clearChat } = useChat()
-    const scrollRef = useAutoScroll(messages)
+    const { scrollContainerRef, contentRef } = useChatAutoScroll(messages)
 
     // Group messages into conversation turns
     const conversationTurns: ConversationTurn[] = []
@@ -334,9 +322,12 @@ export const Chat: React.FC = () => {
     }
 
     return (
-        <div className="h-full flex flex-col bg-background">
+        <div className={cn("h-full flex flex-col bg-background", messages.length === 0 ? "justify-center" : "")}>
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto">
+            <div
+                ref={scrollContainerRef}
+                className={cn("flex-1 overflow-y-auto pb-4", messages.length === 0 ? "max-h-40" : "")}
+            >
                 <div className="h-8 mx-auto px-4">
                     {/* New Chat Button - Floating */}
                     {messages.length > 0 && (
@@ -351,16 +342,13 @@ export const Chat: React.FC = () => {
                     )}
                 </div>
 
-                <div className="pb-4 relative max-w-lg mx-auto">
+                <div ref={contentRef} className="pb-4 relative max-w-lg mx-auto">
 
                     {messages.length === 0 ? (
                         // Empty State
                         <div className="flex items-center justify-center h-full">
-                            <div className="text-center animate-fade-in max-w-md mx-auto gap-2 flex flex-col">
-                                <h3 className="text-2xl font-bold">🫐</h3>
-                                <p className="text-muted-foreground text-sm">
-                                    Press ⌘E to toggle the chat
-                                </p>
+                            <div className="text-center animate-fade-in max-w-md mx-auto gap-2 flex flex-col items-center">
+                                <BlueberryLogoMark className="text-foreground" size={70} />
                             </div>
                         </div>
                     ) : (
@@ -380,9 +368,6 @@ export const Chat: React.FC = () => {
                             ))}
                         </>
                     )}
-
-                    {/* Scroll anchor */}
-                    <div ref={scrollRef} />
                 </div>
             </div>
 
