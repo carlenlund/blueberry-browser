@@ -10,12 +10,6 @@ interface ChatRequest {
   messageId: string;
 }
 
-interface ChatResponse {
-  messageId: string;
-  content: string;
-  isComplete: boolean;
-}
-
 interface TabInfo {
   id: string;
   title: string;
@@ -28,9 +22,7 @@ interface SidebarAPI {
   sendChatMessage: (request: Partial<ChatRequest>) => Promise<void>;
   clearChat: () => Promise<boolean>;
   getMessages: () => Promise<any[]>;
-  onChatResponse: (callback: (data: ChatResponse) => void) => void;
   onMessagesUpdated: (callback: (messages: any[]) => void) => void;
-  removeChatResponseListener: () => void;
   removeMessagesUpdatedListener: () => void;
 
   // Page content access

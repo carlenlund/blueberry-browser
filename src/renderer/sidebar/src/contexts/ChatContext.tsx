@@ -119,13 +119,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Set up message listeners
     useEffect(() => {
-        // Listen for streaming response updates
-        const handleChatResponse = (data: { messageId: string; content: string; isComplete: boolean }) => {
-            if (data.isComplete) {
-                setIsLoading(false)
-            }
-        }
-
         // Listen for message updates from main process
         const handleMessagesUpdated = (updatedMessages: any[]) => {
             // Convert CoreMessage format to our frontend Message format
@@ -141,11 +134,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setMessages(convertedMessages)
         }
 
-        window.sidebarAPI.onChatResponse(handleChatResponse)
         window.sidebarAPI.onMessagesUpdated(handleMessagesUpdated)
 
         return () => {
-            window.sidebarAPI.removeChatResponseListener()
             window.sidebarAPI.removeMessagesUpdatedListener()
         }
     }, [])

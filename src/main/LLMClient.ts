@@ -1,8 +1,10 @@
 import { WebContents } from "electron";
 import {
   jsonSchema,
+  Schema,
   stepCountIs,
   streamText,
+  TextStreamPart,
   type CoreMessage,
   type LanguageModel,
 } from "ai";
@@ -21,11 +23,6 @@ dotenv.config({ path: join(__dirname, "../../.env") });
 interface ChatRequest {
   message: string;
   messageId: string;
-}
-
-interface StreamChunk {
-  content: string;
-  isComplete: boolean;
 }
 
 type LLMProvider = "openai" | "anthropic";
@@ -156,17 +153,16 @@ export class LLMClient {
 
       if (!this.model) {
         this.sendErrorMessage(
-          request.messageId,
           "LLM service is not configured. Please add your API key to the .env file."
         );
         return;
       }
 
       const { system, messages } = await this.prepareMessagesWithContext(request);
-      await this.streamResponse(system, messages, request.messageId);
+      await this.streamResponse(system, messages);
     } catch (error) {
       console.error("Error in LLM request:", error);
-      this.handleStreamError(error, request.messageId);
+      this.handleStreamError(error);
     }
   }
 
@@ -215,9 +211,13 @@ export class LLMClient {
       "You can analyze and discuss web pages with the user.",
       "The user's messages may include screenshots of the current page as the first image.",
       "See if clues are present in the current page.",
-      "Navigate to different pages if information doesnt exist on current page. E.g. if we are on google.com and user asks for 'hackernews top posts', then navigate to hackernews.com",
-      "Think critically about result from tool call. Rerun tool with more general input if necessary.",
-      "For web_content_javascript_inject and web_content_visit_and_inject_javascript, the script field must be function-body code that uses return to produce the value you want from the page.",
+      "Navigate to different pages if information doesnt exist on current page. If the user names another site or resource, load the URL that actually hosts it instead of inferring from the current tab alone.",
+      "Think critically about each tool result. If a tool returns empty or no useful data, you must call a tool again with a different approach. Infer structure from the live DOM, widen or change your strategy, sanity-check that you are even querying the right document state — do not answer as if the page were empty unless you have verified that a materially different approach still finds nothing.",
+      "For web_content_visit_and_inject_javascript, the script field must be function-body code that uses return to produce the value you want from the page.",
+      "Treat every loaded document as unfamiliar: do not rely on memorized page structure, tutorials, Stack Overflow snippets, or typical markup from training. Derive selectors and extraction steps only from tool results you just obtained from this session (excerpts, counts, tags, attributes)—think from scratch each time.",
+      "If a script returns [], null, or blank strings, never repeat that exact script on the same URL. Next call must change strategy: observe the real DOM first (e.g. short innerText or HTML snippets, tentative querySelector counts based on what those snippets suggest), then extract using selectors you justify only from that fresh evidence.",
+      "Never invent path segments, query keys, or numeric ids. Before you pass a non-listing URL to the tool, that exact query string (including digits) must appear in a string your script returned on the current site in this conversation, or in the browser address bar — not merely inferred from a title visible in text.",
+      "After you load a URL, sanity-check briefly (e.g. returned title or heading text) that the document matches the user’s topic before summarizing; if it clearly does not, go back and re-extract the correct link from the listing.",
     ];
 
     if (url) {
@@ -227,11 +227,7 @@ export class LLMClient {
     return parts.join("\n");
   }
 
-  private async streamResponse(
-    system: string,
-    messages: CoreMessage[],
-    messageId: string
-  ): Promise<void> {
+  private async streamResponse(system: string, messages: CoreMessage[]): Promise<void> {
     if (!this.model) {
       throw new Error("Model not initialized");
     }
@@ -246,45 +242,9 @@ export class LLMClient {
         abortSignal: undefined, // Could add abort controller for cancellation
         stopWhen: stepCountIs(8), // NOTE(Carl): Arbitrary limit so we have enough steps for processing data and navigating.
         tools: {
-          web_content_javascript_inject: {
-            description:
-              "Run JavaScript in the active tab. The script is inserted as the body of a try block inside an IIFE. Use return to pass the tool result back.",
-            inputSchema: jsonSchema<{ script: string }>({
-              type: "object",
-              properties: {
-                script: {
-                  type: "string",
-                  description:
-                    "Function body (statements). Must end by returning the value for the tool result, e.g. return Array.from(document.querySelectorAll('a')).map(n => n.textContent).join('\\n');",
-                },
-              },
-              required: ["script"],
-            }),
-            execute: async ({ script }: { script: string }) => {
-              const tab = this.window?.activeTab;
-              return await tab?.runExclusive(async () => {
-                if (process.env.NODE_ENV === "development") {
-                  console.log('@@@@@@@@@ begin web_content_javascript_inject @@@@@@@@@');
-                  console.log('@@@@@@@@@ begin script @@@@@@@@@');
-                  console.log(script);
-                  console.log('@@@@@@@@@ end script @@@@@@@@@');
-                }
-
-                const result = await tab?.runJs(script);
-                if (process.env.NODE_ENV === "development") {
-                  console.log('@@@@@@@@@ result @@@@@@@@@');
-                  console.log(result);
-                  console.log('@@@@@@@@@ end result @@@@@@@@@');
-                  console.log('@@@@@@@@@ end web_content_javascript_inject @@@@@@@@@');
-                }
-
-                return result;
-              });
-            }
-          },
           web_content_visit_and_inject_javascript: {
             description:
-              "Load url in the active tab, then run JavaScript. The script is inserted as the body of a try block inside an IIFE. Use return for the tool result.",
+              "Load url in the active tab, then run JavaScript. The script is inserted as the body of a try block inside an IIFE. Use return for the tool result. Do not assume memorized DOM layouts for any site; infer structure from what this navigation returns. If the prior tool result was empty and you did not change the script materially, run a short diagnostic or revise selectors instead of repeating.",
             inputSchema: jsonSchema<{ url: string; script: string }>({
               type: "object",
               properties: {
@@ -325,7 +285,7 @@ export class LLMClient {
                 const runResult = await tab?.runJs(script);
                 if (process.env.NODE_ENV === "development") {
                   console.log('@@@@@@@@@ runResult @@@@@@@@@');
-                  console.log(runResult);
+                  console.log(JSON.stringify(runResult));
                   console.log('@@@@@@@@@ end runResult @@@@@@@@@');
                 }
                 if (process.env.NODE_ENV === "development") {
@@ -339,15 +299,14 @@ export class LLMClient {
         },
       });
 
-      await this.processStream(result.textStream, messageId);
+      await this.processStream(result.fullStream);
     } catch (error) {
       throw error; // Re-throw to be handled by the caller
     }
   }
 
   private async processStream(
-    textStream: AsyncIterable<string>,
-    messageId: string
+    fullStream: AsyncIterable<TextStreamPart<{ web_content_visit_and_inject_javascript: { description: string; inputSchema: Schema<{ url: string; script: string; }>; execute: ({ url, script }: { url: string; script: string; }) => Promise<void | undefined>; }; }>>,
   ): Promise<void> {
     let accumulatedText = "";
 
@@ -361,20 +320,17 @@ export class LLMClient {
     const messageIndex = this.messages.length;
     this.messages.push(assistantMessage);
 
-    for await (const chunk of textStream) {
-      accumulatedText += chunk;
+    for await (const chunk of fullStream) {
+      if (chunk.type === "text-delta") {
+        accumulatedText += chunk.text;
 
-      // Update assistant message content
-      this.messages[messageIndex] = {
-        role: "assistant",
-        content: accumulatedText,
-      };
-      this.sendMessagesToRenderer();
-
-      this.sendStreamChunk(messageId, {
-        content: chunk,
-        isComplete: false,
-      });
+        // Update assistant message content
+        this.messages[messageIndex] = {
+          role: "assistant",
+          content: accumulatedText,
+        };
+        this.sendMessagesToRenderer();
+      }
     }
 
     // Final update with complete content
@@ -383,19 +339,13 @@ export class LLMClient {
       content: accumulatedText,
     };
     this.sendMessagesToRenderer();
-
-    // Send the final complete signal
-    this.sendStreamChunk(messageId, {
-      content: accumulatedText,
-      isComplete: true,
-    });
   }
 
-  private handleStreamError(error: unknown, messageId: string): void {
+  private handleStreamError(error: unknown): void {
     console.error("Error streaming from LLM:", error);
 
     const errorMessage = this.getErrorMessage(error);
-    this.sendErrorMessage(messageId, errorMessage);
+    this.sendErrorMessage(errorMessage);
   }
 
   private getErrorMessage(error: unknown): string {
@@ -428,18 +378,11 @@ export class LLMClient {
     return "Sorry, I encountered an error while processing your request. Please try again.";
   }
 
-  private sendErrorMessage(messageId: string, errorMessage: string): void {
-    this.sendStreamChunk(messageId, {
+  private sendErrorMessage(errorMessage: string): void {
+    this.messages.push({
+      role: "assistant",
       content: errorMessage,
-      isComplete: true,
     });
-  }
-
-  private sendStreamChunk(messageId: string, chunk: StreamChunk): void {
-    this.webContents.send("chat-response", {
-      messageId,
-      content: chunk.content,
-      isComplete: chunk.isComplete,
-    });
+    this.sendMessagesToRenderer();
   }
 }

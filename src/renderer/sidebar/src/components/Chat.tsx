@@ -52,13 +52,12 @@ const StreamingText: React.FC<{ content: string }> = ({ content }) => {
     const [currentIndex, setCurrentIndex] = useState(0)
 
     useEffect(() => {
-        if (currentIndex < content.length) {
-            const timer = setTimeout(() => {
-                setDisplayedContent(content.slice(0, currentIndex + 1))
-                setCurrentIndex(currentIndex + 1)
-            }, 10)
-            return () => clearTimeout(timer)
-        }
+        if (currentIndex >= content.length) return
+        const timer = setTimeout(() => {
+            setDisplayedContent(content.slice(0, currentIndex + 1))
+            setCurrentIndex(currentIndex + 1)
+        }, 10)
+        return () => clearTimeout(timer)
     }, [content, currentIndex])
 
     return (
