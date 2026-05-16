@@ -32,7 +32,7 @@ const DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
-const DEFAULT_TEMPERATURE = 0.7;
+const DEFAULT_TEMPERATURE = 0.3;
 
 export class LLMClient {
   private readonly webContents: WebContents;
@@ -205,23 +205,34 @@ export class LLMClient {
     };
   }
 
-  private buildSystemPrompt(url: string | null, _pageText: string | null): string {
+  private buildSystemPrompt(url: string | null, pageText: string | null): string {
     const parts: string[] = [
-      "You are a helpful AI assistant integrated into a web browser.",
-      "You can analyze and discuss web pages with the user.",
-      "The user's messages may include screenshots of the current page as the first image.",
-      "See if clues are present in the current page.",
-      "Navigate to different pages if information doesnt exist on current page. If the user names another site or resource, load the URL that actually hosts it instead of inferring from the current tab alone.",
-      "Think critically about each tool result. If a tool returns empty or no useful data, you must call a tool again with a different approach. Infer structure from the live DOM, widen or change your strategy, sanity-check that you are even querying the right document state — do not answer as if the page were empty unless you have verified that a materially different approach still finds nothing.",
-      "For web_content_visit_and_inject_javascript, the script field must be function-body code that uses return to produce the value you want from the page.",
-      "Treat every loaded document as unfamiliar: do not rely on memorized page structure, tutorials, Stack Overflow snippets, or typical markup from training. Derive selectors and extraction steps only from tool results you just obtained from this session (excerpts, counts, tags, attributes)—think from scratch each time.",
-      "If a script returns [], null, or blank strings, never repeat that exact script on the same URL. Next call must change strategy: observe the real DOM first (e.g. short innerText or HTML snippets, tentative querySelector counts based on what those snippets suggest), then extract using selectors you justify only from that fresh evidence.",
-      "Never invent path segments, query keys, or numeric ids. Before you pass a non-listing URL to the tool, that exact query string (including digits) must appear in a string your script returned on the current site in this conversation, or in the browser address bar — not merely inferred from a title visible in text.",
-      "After you load a URL, sanity-check briefly (e.g. returned title or heading text) that the document matches the user’s topic before summarizing; if it clearly does not, go back and re-extract the correct link from the listing.",
+      "You are a helpful assistant inside a web browser; the user can analyze and discuss pages with you.",
+      "Use the current tab URL and the page excerpt below when they help; navigate or open another URL when the user asks or the answer is not here.",
+      "You can run scripts in the page via web_content_visit_and_inject_javascript: pass function-body JavaScript and use return to send back the value you need.",
+      "Treat each page as unknown: base selectors and clicks on what you see in excerpts and tool results; if something fails or is empty, try a different approach instead of repeating the same script.",
+      "When finding elements or text, prefer fuzzy matching: case-insensitive and partial matches (e.g. includes, normalize whitespace), attribute substring selectors ([href*=\"...\"], [placeholder*=\"...\"], [aria-label*=\"...\"]; in Chromium you may use the i flag on attribute selectors for case-insensitivity), XPath contains(), walking clickable nodes and picking the closest label to the user's phrase; if exact wording fails, try shorter substrings, synonyms, or alternate spellings before giving up.",
+      "If querySelector returns null, the control may be in an iframe (iterate iframes and query iframe.contentDocument when allowed) or in a shadow root (host.shadowRoot); failing that, return a compact diagnostic: list inputs/buttons with tagName, type, placeholder, name, id, aria-label (cap ~40) so the next script can fuzzy-match.",
+      "On search homepages, consent or overlay dialogs can block the query box—try visible textarea/input near the top of the tree, [name=q], [type=search], or dismissing common consent buttons before assuming the selector is wrong.",
+      "When interacting with the page, prefer matching visible labels and avoid one-off generic selectors that might hit browser chrome; do not submit forms or post content unless the user clearly wants that.",
+      "Do not invent URLs or facts; briefly confirm the page matches the task before summarizing; ask the user if critical context is missing.",
+      "Find page URLs by checking results on Google Search. Don't use remembered page URLs."
     ];
 
     if (url) {
       parts.push(`Current page URL: ${url}`);
+    }
+
+    if (pageText) {
+      const maxChars = 8000;
+      const excerpt =
+        pageText.length > maxChars
+          ? `${pageText.slice(0, maxChars)}\n...[page text truncated]`
+          : pageText;
+      parts.push(
+        "Current page rendered text excerpt (buttons and labels appear here alongside links; truncated if long):\n" +
+          excerpt
+      );
     }
 
     return parts.join("\n");
@@ -240,11 +251,15 @@ export class LLMClient {
         temperature: DEFAULT_TEMPERATURE,
         maxRetries: 5,
         abortSignal: undefined, // Could add abort controller for cancellation
-        stopWhen: stepCountIs(8), // NOTE(Carl): Arbitrary limit so we have enough steps for processing data and navigating.
+        stopWhen: stepCountIs(16), // NOTE(Carl): Arbitrary limit so we have enough steps for processing data and navigating.
         tools: {
           web_content_visit_and_inject_javascript: {
             description:
-              "Load url in the active tab, then run JavaScript. The script is inserted as the body of a try block inside an IIFE. Use return for the tool result. Do not assume memorized DOM layouts for any site; infer structure from what this navigation returns. If the prior tool result was empty and you did not change the script materially, run a short diagnostic or revise selectors instead of repeating.",
+              `Loads the URL in the active tab (if needed), then runs your script. ` +
+              `Pass function-body code; use return to produce the result. ` +
+              `When locating content or controls, use fuzzy strategies before exact selectors: toLowerCase + includes on innerText/textContent; substring attribute matches; document.evaluate with contains() for text; collect candidate buttons/links and score by how well their visible text matches the user's words (partial, order-agnostic). If the node is missing, search inside iframes and open shadow roots, or return a short list of field metadata (placeholder, name, aria-label) to refine the next step. ` +
+              `If the result is empty or wrong, adjust the script rather than repeating it unchanged. ` +
+              `Omitting return yields scriptCompletedWithoutReturn—follow with a short script that returns evidence (e.g. href or a text excerpt).`,
             inputSchema: jsonSchema<{ url: string; script: string }>({
               type: "object",
               properties: {
@@ -256,7 +271,7 @@ export class LLMClient {
                 script: {
                   type: "string",
                   description:
-                    "Function body (statements). Must return the tool result, e.g. return document.documentElement.innerText;",
+                    "Function body (statements). Must return the tool result, e.g. return document.documentElement.innerText;. After form submit or login clicks, return evidence (e.g. return { href: location.href, preview: document.body.innerText.slice(0, 800) };) so the outcome is verifiable.",
                 },
               },
               required: ["url", "script"],
@@ -264,25 +279,31 @@ export class LLMClient {
             execute: async ({ url, script }: { url: string, script: string }) => {
               const tab = this.window?.activeTab;
               return await tab?.runExclusive(async () => {
+                if (!tab) {
+                  return undefined;
+                }
+
                 if (process.env.NODE_ENV === "development") {
                   console.log('@@@@@@@@@ begin web_content_visit_and_inject_javascript @@@@@@@@@');
-                  console.log('@@@@@@@@@ begin url @@@@@@@@@');
-                  console.log(url);
-                  console.log('@@@@@@@@@ end url @@@@@@@@@');
                   console.log('@@@@@@@@@ begin script @@@@@@@@@');
                   console.log(script);
                   console.log('@@@@@@@@@ end script @@@@@@@@@');
                 }
 
-                const alreadyOnPage = tab?.url === url;
-                if (process.env.NODE_ENV === "development" && alreadyOnPage) {
-                  console.log('@@@@@@@@@ skip loadURL (already on page) @@@@@@@@@');
-                }
+                const alreadyOnPage = tab.url === url;
                 if (!alreadyOnPage) {
-                  await tab?.loadURL(url);
+                  await tab.loadURL(url);
+                  await tab.settleAfterNavigation(500);
                 }
 
-                const runResult = await tab?.runJs(script);
+                let runResult = await tab.runJs(script);
+                if (runResult === undefined) {
+                  runResult = {
+                    scriptCompletedWithoutReturn: true,
+                    urlAfterRun: tab.url ?? null,
+                    hint: "Script ran with no return value. Return location.href or a short innerText excerpt in a follow-up call to confirm login or errors.",
+                  };
+                }
                 if (process.env.NODE_ENV === "development") {
                   console.log('@@@@@@@@@ runResult @@@@@@@@@');
                   console.log(JSON.stringify(runResult));
@@ -308,36 +329,28 @@ export class LLMClient {
   private async processStream(
     fullStream: AsyncIterable<TextStreamPart<{ web_content_visit_and_inject_javascript: { description: string; inputSchema: Schema<{ url: string; script: string; }>; execute: ({ url, script }: { url: string; script: string; }) => Promise<void | undefined>; }; }>>,
   ): Promise<void> {
-    let accumulatedText = "";
+    const assistantMsgIndex = this.messages.length;
 
-    // Create a placeholder assistant message
-    const assistantMessage: CoreMessage = {
+    this.messages.push({
       role: "assistant",
       content: "",
-    };
-    
-    // Keep track of the index for updates
-    const messageIndex = this.messages.length;
-    this.messages.push(assistantMessage);
+    });
 
     for await (const chunk of fullStream) {
       if (chunk.type === "text-delta") {
-        accumulatedText += chunk.text;
-
-        // Update assistant message content
-        this.messages[messageIndex] = {
+        const slot = this.messages[assistantMsgIndex];
+        const prev =
+          slot?.role === "assistant" && typeof slot.content === "string"
+            ? slot.content
+            : "";
+        this.messages[assistantMsgIndex] = {
           role: "assistant",
-          content: accumulatedText,
+          content: prev + chunk.text,
         };
         this.sendMessagesToRenderer();
       }
     }
 
-    // Final update with complete content
-    this.messages[messageIndex] = {
-      role: "assistant",
-      content: accumulatedText,
-    };
     this.sendMessagesToRenderer();
   }
 

@@ -88,11 +88,9 @@ export class Tab {
 
   // Queue this callback for execution.
   // So that JavaScript code or page navigation is not interrupted.
-  async runExclusive(callback: () => Promise<void>): Promise<void> {
+  async runExclusive<T>(callback: () => Promise<T>): Promise<T> {
     const previous = this._exclusiveRunChain;
-    const current = previous.then(() => {
-      return callback();
-    });
+    const current = previous.then(() => callback());
     this._exclusiveRunChain = current
       .then(() => {})
       .catch(() => {});
@@ -120,6 +118,27 @@ export class Tab {
 
   async getTabText(): Promise<string> {
     return await this.runJs("return document.documentElement.innerText");
+  }
+
+  /** Resolve once the document has fired `load` (no-op if already complete). */
+  async ensureDocumentReady(): Promise<void> {
+    await this.runJs(`
+      return new Promise((resolve) => {
+        if (document.readyState === "complete") {
+          resolve(true);
+          return;
+        }
+        window.addEventListener("load", () => resolve(true), { once: true });
+      });
+    `);
+  }
+
+  /** After a navigation, wait for load then a short window so SPAs/iframes can populate. */
+  async settleAfterNavigation(extraMs: number = 500): Promise<void> {
+    await this.ensureDocumentReady();
+    if (extraMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, extraMs));
+    }
   }
 
   loadURL(url: string): Promise<void> {
