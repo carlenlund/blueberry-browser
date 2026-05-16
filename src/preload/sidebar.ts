@@ -52,9 +52,6 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
-
-  tabRunJs: (tabId: string, code: string) =>
-    electronAPI.ipcRenderer.invoke("tab-run-js", tabId, code),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

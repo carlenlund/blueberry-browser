@@ -16,17 +16,12 @@ interface BrowserContextType {
     createTab: (url?: string) => Promise<void>
     closeTab: (tabId: string) => Promise<void>
     switchTab: (tabId: string) => Promise<void>
-    refreshTabs: () => Promise<void>
 
     // Navigation
     navigateToUrl: (url: string) => Promise<void>
     goBack: () => Promise<void>
     goForward: () => Promise<void>
     reload: () => Promise<void>
-
-    // Tab actions
-    takeScreenshot: (tabId: string) => Promise<string | null>
-    runJavaScript: (tabId: string, code: string) => Promise<any>
 }
 
 const BrowserContext = createContext<BrowserContextType | null>(null)
@@ -138,24 +133,6 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     }, [activeTab, refreshTabs])
 
-    const takeScreenshot = useCallback(async (tabId: string) => {
-        try {
-            return await window.topBarAPI.tabScreenshot(tabId)
-        } catch (error) {
-            console.error('Failed to take screenshot:', error)
-            return null
-        }
-    }, [])
-
-    const runJavaScript = useCallback(async (tabId: string, code: string) => {
-        try {
-            return await window.topBarAPI.tabRunJs(tabId, code)
-        } catch (error) {
-            console.error('Failed to run JavaScript:', error)
-            return null
-        }
-    }, [])
-
     // Initialize tabs on mount
     useEffect(() => {
         refreshTabs()
@@ -174,13 +151,10 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
         createTab,
         closeTab,
         switchTab,
-        refreshTabs,
         navigateToUrl,
         goBack,
         goForward,
-        reload,
-        takeScreenshot,
-        runJavaScript
+        reload
     }
 
     return (

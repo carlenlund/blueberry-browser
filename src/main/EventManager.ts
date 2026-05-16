@@ -116,23 +116,6 @@ export class EventManager {
       return false;
     });
 
-    ipcMain.handle("tab-screenshot", async (_, tabId: string) => {
-      const tab = this.mainWindow.getTab(tabId);
-      if (tab) {
-        const image = await tab.screenshot();
-        return image.toDataURL();
-      }
-      return null;
-    });
-
-    ipcMain.handle("tab-run-js", async (_, tabId: string, code: string) => {
-      const tab = this.mainWindow.getTab(tabId);
-      if (tab) {
-        return await tab.runJs(code);
-      }
-      return null;
-    });
-
     // Tab info
     ipcMain.handle("get-active-tab-info", () => {
       const activeTab = this.mainWindow.activeTab;

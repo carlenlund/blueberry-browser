@@ -6,6 +6,7 @@ export class Tab {
   private _title: string;
   private _url: string;
   private _isVisible: boolean = false;
+  private _exclusiveRunChain: Promise<void> = Promise.resolve();
 
   constructor(id: string, url: string = "https://www.google.com") {
     this._id = id;
@@ -85,8 +86,32 @@ export class Tab {
     return await this.webContentsView.webContents.capturePage();
   }
 
+  // Queue this callback for execution.
+  // So that JavaScript code or page navigation is not interrupted.
+  async runExclusive(callback: () => Promise<void>): Promise<void> {
+    const previous = this._exclusiveRunChain;
+    const current = previous.then(() => {
+      return callback();
+    });
+    this._exclusiveRunChain = current
+      .then(() => {})
+      .catch(() => {});
+    return current;
+  }
+
   async runJs(code: string): Promise<any> {
-    return await this.webContentsView.webContents.executeJavaScript(code);
+    // Wrap in closure to avoid global scope pollution.
+    // Assumes code has `return <result>` as its final statement.
+    const wrappedCode = `
+      (function() {
+        try {
+          ${code}
+        } catch (error) {
+          return error.message;
+        }
+      })()
+    `;
+    return await this.webContentsView.webContents.executeJavaScript(wrappedCode);
   }
 
   async getTabHtml(): Promise<string> {

@@ -22,10 +22,6 @@ interface TopBarAPI {
   goForward: (tabId: string) => Promise<void>;
   reload: (tabId: string) => Promise<void>;
 
-  // Tab actions
-  tabScreenshot: (tabId: string) => Promise<string | null>;
-  tabRunJs: (tabId: string, code: string) => Promise<any>;
-
   // Sidebar
   toggleSidebar: () => Promise<void>;
 }

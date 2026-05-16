@@ -22,12 +22,6 @@ const topBarAPI = {
   reload: (tabId: string) =>
     electronAPI.ipcRenderer.invoke("tab-reload", tabId),
 
-  // Tab actions
-  tabScreenshot: (tabId: string) =>
-    electronAPI.ipcRenderer.invoke("tab-screenshot", tabId),
-  tabRunJs: (tabId: string, code: string) =>
-    electronAPI.ipcRenderer.invoke("tab-run-js", tabId, code),
-
   // Sidebar
   toggleSidebar: () =>
     electronAPI.ipcRenderer.invoke("toggle-sidebar"),

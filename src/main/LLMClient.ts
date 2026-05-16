@@ -1,10 +1,19 @@
 import { WebContents } from "electron";
-import { streamText, type LanguageModel, type CoreMessage } from "ai";
+import {
+  jsonSchema,
+  stepCountIs,
+  streamText,
+  type CoreMessage,
+  type LanguageModel,
+} from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
+
+// Flags
+const USE_SCREENSHOT = false;
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -26,7 +35,6 @@ const DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
-const MAX_CONTEXT_LENGTH = 4000;
 const DEFAULT_TEMPERATURE = 0.7;
 
 export class LLMClient {
@@ -105,15 +113,12 @@ export class LLMClient {
     try {
       // Get screenshot from active tab if available
       let screenshot: string | null = null;
-      if (this.window) {
-        const activeTab = this.window.activeTab;
-        if (activeTab) {
-          try {
-            const image = await activeTab.screenshot();
-            screenshot = image.toDataURL();
-          } catch (error) {
-            console.error("Failed to capture screenshot:", error);
-          }
+      if (this.window?.activeTab) {
+        try {
+          const image = await this.window?.activeTab.screenshot();
+          screenshot = image.toDataURL();
+        } catch (error) {
+          console.error("Failed to capture screenshot:", error);
         }
       }
 
@@ -121,7 +126,7 @@ export class LLMClient {
       const userContent: any[] = [];
       
       // Add screenshot as the first part if available
-      if (screenshot) {
+      if (USE_SCREENSHOT && screenshot) {
         userContent.push({
           type: "image",
           image: screenshot,
@@ -139,6 +144,10 @@ export class LLMClient {
         role: "user",
         content: userContent.length === 1 ? request.message : userContent,
       };
+
+      console.log('@@@@@@@@@ userMessage @@@@@@@@@');
+      console.log(userMessage);
+      console.log('@@@@@@@@@ end userMessage @@@@@@@@@');
       
       this.messages.push(userMessage);
 
@@ -153,8 +162,8 @@ export class LLMClient {
         return;
       }
 
-      const messages = await this.prepareMessagesWithContext(request);
-      await this.streamResponse(messages, request.messageId);
+      const { system, messages } = await this.prepareMessagesWithContext(request);
+      await this.streamResponse(system, messages, request.messageId);
     } catch (error) {
       console.error("Error in LLM request:", error);
       this.handleStreamError(error, request.messageId);
@@ -174,11 +183,14 @@ export class LLMClient {
     this.webContents.send("chat-messages-updated", this.messages);
   }
 
-  private async prepareMessagesWithContext(_request: ChatRequest): Promise<CoreMessage[]> {
+  private async prepareMessagesWithContext(_request: ChatRequest): Promise<{
+    system: string;
+    messages: CoreMessage[];
+  }> {
     // Get page context from active tab
     let pageUrl: string | null = null;
     let pageText: string | null = null;
-    
+
     if (this.window) {
       const activeTab = this.window.activeTab;
       if (activeTab) {
@@ -191,46 +203,32 @@ export class LLMClient {
       }
     }
 
-    // Build system message
-    const systemMessage: CoreMessage = {
-      role: "system",
-      content: this.buildSystemPrompt(pageUrl, pageText),
+    return {
+      system: this.buildSystemPrompt(pageUrl, pageText),
+      messages: this.messages,
     };
-
-    // Include all messages in history (system + conversation)
-    return [systemMessage, ...this.messages];
   }
 
-  private buildSystemPrompt(url: string | null, pageText: string | null): string {
+  private buildSystemPrompt(url: string | null, _pageText: string | null): string {
     const parts: string[] = [
       "You are a helpful AI assistant integrated into a web browser.",
       "You can analyze and discuss web pages with the user.",
       "The user's messages may include screenshots of the current page as the first image.",
+      "See if clues are present in the current page.",
+      "Navigate to different pages if information doesnt exist on current page. E.g. if we are on google.com and user asks for 'hackernews top posts', then navigate to hackernews.com",
+      "Think critically about result from tool call. Rerun tool with more general input if necessary.",
+      "For web_content_javascript_inject and web_content_visit_and_inject_javascript, the script field must be function-body code that uses return to produce the value you want from the page.",
     ];
 
     if (url) {
-      parts.push(`\nCurrent page URL: ${url}`);
+      parts.push(`Current page URL: ${url}`);
     }
-
-    if (pageText) {
-      const truncatedText = this.truncateText(pageText, MAX_CONTEXT_LENGTH);
-      parts.push(`\nPage content (text):\n${truncatedText}`);
-    }
-
-    parts.push(
-      "\nPlease provide helpful, accurate, and contextual responses about the current webpage.",
-      "If the user asks about specific content, refer to the page content and/or screenshot provided."
-    );
 
     return parts.join("\n");
   }
 
-  private truncateText(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength) + "...";
-  }
-
   private async streamResponse(
+    system: string,
     messages: CoreMessage[],
     messageId: string
   ): Promise<void> {
@@ -241,10 +239,104 @@ export class LLMClient {
     try {
       const result = await streamText({
         model: this.model,
+        system,
         messages,
         temperature: DEFAULT_TEMPERATURE,
-        maxRetries: 3,
+        maxRetries: 5,
         abortSignal: undefined, // Could add abort controller for cancellation
+        stopWhen: stepCountIs(8), // NOTE(Carl): Arbitrary limit so we have enough steps for processing data and navigating.
+        tools: {
+          web_content_javascript_inject: {
+            description:
+              "Run JavaScript in the active tab. The script is inserted as the body of a try block inside an IIFE. Use return to pass the tool result back.",
+            inputSchema: jsonSchema<{ script: string }>({
+              type: "object",
+              properties: {
+                script: {
+                  type: "string",
+                  description:
+                    "Function body (statements). Must end by returning the value for the tool result, e.g. return Array.from(document.querySelectorAll('a')).map(n => n.textContent).join('\\n');",
+                },
+              },
+              required: ["script"],
+            }),
+            execute: async ({ script }: { script: string }) => {
+              const tab = this.window?.activeTab;
+              return await tab?.runExclusive(async () => {
+                if (process.env.NODE_ENV === "development") {
+                  console.log('@@@@@@@@@ begin web_content_javascript_inject @@@@@@@@@');
+                  console.log('@@@@@@@@@ begin script @@@@@@@@@');
+                  console.log(script);
+                  console.log('@@@@@@@@@ end script @@@@@@@@@');
+                }
+
+                const result = await tab?.runJs(script);
+                if (process.env.NODE_ENV === "development") {
+                  console.log('@@@@@@@@@ result @@@@@@@@@');
+                  console.log(result);
+                  console.log('@@@@@@@@@ end result @@@@@@@@@');
+                  console.log('@@@@@@@@@ end web_content_javascript_inject @@@@@@@@@');
+                }
+
+                return result;
+              });
+            }
+          },
+          web_content_visit_and_inject_javascript: {
+            description:
+              "Load url in the active tab, then run JavaScript. The script is inserted as the body of a try block inside an IIFE. Use return for the tool result.",
+            inputSchema: jsonSchema<{ url: string; script: string }>({
+              type: "object",
+              properties: {
+                url: {
+                  type: "string",
+                  description:
+                    "The URL to visit.",
+                },
+                script: {
+                  type: "string",
+                  description:
+                    "Function body (statements). Must return the tool result, e.g. return document.documentElement.innerText;",
+                },
+              },
+              required: ["url", "script"],
+            }),
+            execute: async ({ url, script }: { url: string, script: string }) => {
+              const tab = this.window?.activeTab;
+              return await tab?.runExclusive(async () => {
+                if (process.env.NODE_ENV === "development") {
+                  console.log('@@@@@@@@@ begin web_content_visit_and_inject_javascript @@@@@@@@@');
+                  console.log('@@@@@@@@@ begin url @@@@@@@@@');
+                  console.log(url);
+                  console.log('@@@@@@@@@ end url @@@@@@@@@');
+                  console.log('@@@@@@@@@ begin script @@@@@@@@@');
+                  console.log(script);
+                  console.log('@@@@@@@@@ end script @@@@@@@@@');
+                }
+
+                const alreadyOnPage = tab?.url === url;
+                if (process.env.NODE_ENV === "development" && alreadyOnPage) {
+                  console.log('@@@@@@@@@ skip loadURL (already on page) @@@@@@@@@');
+                }
+                if (!alreadyOnPage) {
+                  await tab?.loadURL(url);
+                }
+
+                const runResult = await tab?.runJs(script);
+                if (process.env.NODE_ENV === "development") {
+                  console.log('@@@@@@@@@ runResult @@@@@@@@@');
+                  console.log(runResult);
+                  console.log('@@@@@@@@@ end runResult @@@@@@@@@');
+                }
+                if (process.env.NODE_ENV === "development") {
+                  console.log('@@@@@@@@@ end web_content_visit_and_inject_javascript @@@@@@@@@');
+                }
+
+                return runResult;
+              });
+            }
+          }
+        },
       });
 
       await this.processStream(result.textStream, messageId);
