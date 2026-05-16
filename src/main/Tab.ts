@@ -86,14 +86,16 @@ export class Tab {
     return await this.webContentsView.webContents.capturePage();
   }
 
-  // Queue this callback for execution.
-  // So that JavaScript code or page navigation is not interrupted.
-  async runExclusive<T>(callback: () => Promise<T>): Promise<T> {
+  // Queue this callback for execution, to prevent race conditions.
+  // Example: To make sure LLM tool calls are executed in order.
+  async runExclusive(callback: () => Promise<void>): Promise<void> {
+    // Get head of the chain.
     const previous = this._exclusiveRunChain;
+    // Current link in chain. Add callback when previous is resolved.
     const current = previous.then(() => callback());
-    this._exclusiveRunChain = current
-      .then(() => {})
-      .catch(() => {});
+    // Replace head with current.
+    // Need a .catch() to prevent exceptions from stopping the chain.
+    this._exclusiveRunChain = current.catch(() => {});
     return current;
   }
 
