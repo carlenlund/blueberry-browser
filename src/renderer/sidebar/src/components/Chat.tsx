@@ -312,7 +312,7 @@ export const Chat: React.FC = () => {
                             <div className="text-center animate-fade-in max-w-md mx-auto gap-2 flex flex-col">
                                 <h3 className="text-2xl font-bold">🫐</h3>
                                 <p className="text-muted-foreground text-sm">
-                                    Press ⌘E to toggle the sidebar
+                                    Press ⌘E to toggle the chat
                                 </p>
                             </div>
                         </div>

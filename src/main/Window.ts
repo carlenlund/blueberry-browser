@@ -1,7 +1,18 @@
-import { BaseWindow, shell } from "electron";
+import { BaseWindow, nativeTheme, shell } from "electron";
 import { Tab } from "./Tab";
 import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
+
+/** Matches `--muted` / `--foreground` in `src/renderer/topbar/src/index.css` */
+const TITLE_BAR_OVERLAY_LIGHT = {
+  color: "#f5f5f5",
+  symbolColor: "#141414",
+} as const;
+
+const TITLE_BAR_OVERLAY_DARK = {
+  color: "#282828",
+  symbolColor: "#fafafa",
+} as const;
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -58,6 +69,22 @@ export class Window {
     });
 
     this.setupEventListeners();
+
+    // Native caption buttons follow OS theme by default; align with app theme.
+    this.syncTitleBarOverlayTheme(nativeTheme.shouldUseDarkColors);
+  }
+
+  /**
+   * Window Controls Overlay (Windows / Linux): keep maximize / minimize / close
+   * colors in sync with in-app light/dark mode.
+   */
+  syncTitleBarOverlayTheme(isDarkMode: boolean): void {
+    if (process.platform === "darwin") {
+      return;
+    }
+    this._baseWindow.setTitleBarOverlay(
+      isDarkMode ? TITLE_BAR_OVERLAY_DARK : TITLE_BAR_OVERLAY_LIGHT
+    );
   }
 
   private setupEventListeners(): void {
@@ -96,14 +123,16 @@ export class Window {
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
 
-    // Set the bounds to fill the window below the topbar and to the left of sidebar
+    // Full width below topbar; sidebar WebContentsView stacks on top as an overlay
     const bounds = this._baseWindow.getBounds();
     tab.view.setBounds({
       x: 0,
       y: 88, // Start below the topbar
-      width: bounds.width - 400, // Subtract sidebar width
+      width: bounds.width,
       height: bounds.height - 88, // Subtract topbar height
     });
+
+    this.raiseSideBarAboveTabs();
 
     // Store the tab
     this.tabsMap.set(tabId, tab);
@@ -229,17 +258,22 @@ export class Window {
     return this._baseWindow.getBounds();
   }
 
+  /** Keep sidebar above tab views so the full-width overlay receives input over web content. */
+  private raiseSideBarAboveTabs(): void {
+    const content = this._baseWindow.contentView;
+    content.removeChildView(this._sideBar.view);
+    content.addChildView(this._sideBar.view);
+  }
+
   // Handle window resize to update tab bounds
   private updateTabBounds(): void {
     const bounds = this._baseWindow.getBounds();
-    // Only subtract sidebar width if it's visible
-    const sidebarWidth = this._sideBar.getIsVisible() ? 400 : 0;
 
     this.tabsMap.forEach((tab) => {
       tab.view.setBounds({
         x: 0,
         y: 88, // Start below the topbar
-        width: bounds.width - sidebarWidth,
+        width: bounds.width,
         height: bounds.height - 88, // Subtract topbar height
       });
     });

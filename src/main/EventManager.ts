@@ -207,6 +207,8 @@ export class EventManager {
   }
 
   private broadcastDarkMode(sender: WebContents, isDarkMode: boolean): void {
+    this.mainWindow.syncTitleBarOverlayTheme(isDarkMode);
+
     // Send to topbar
     if (this.mainWindow.topBar.view.webContents !== sender) {
       this.mainWindow.topBar.view.webContents.send(
