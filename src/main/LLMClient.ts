@@ -28,7 +28,7 @@ interface ChatRequest {
 type LLMProvider = "openai" | "anthropic";
 
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o-mini",
+  openai: "gpt-4o",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
@@ -216,7 +216,9 @@ export class LLMClient {
       "On search homepages, consent or overlay dialogs can block the query box—try visible textarea/input near the top of the tree, [name=q], [type=search], or dismissing common consent buttons before assuming the selector is wrong.",
       "When interacting with the page, prefer matching visible labels and avoid one-off generic selectors that might hit browser chrome; do not submit forms or post content unless the user clearly wants that.",
       "Do not invent URLs or facts; briefly confirm the page matches the task before summarizing; ask the user if critical context is missing.",
-      "Find page URLs by checking results on Google Search. Don't use remembered page URLs."
+      "Find page URLs by checking results on Google Search. Don't use remembered page URLs.",
+      "When the user asks to search the web or \"Google\" something, prefer navigating with web_content_visit_and_inject_javascript to https://www.google.com/search?q= plus encodeURIComponent(...) for the query terms instead of typing into google.com's homepage. Cookie/consent interstitials and regional shells often omit input[name=q], which makes homepage scripting unreliable.",
+      "After navigating to a search results URL, use return with location.href and a short snippet of document.body.innerText (or similar) so you can verify results loaded before replying."
     ];
 
     if (url) {
@@ -257,6 +259,7 @@ export class LLMClient {
             description:
               `Loads the URL in the active tab (if needed), then runs your script. ` +
               `Pass function-body code; use return to produce the result. ` +
+              `For Google web searches, load https://www.google.com/search?q=<encoded query> directly rather than scripting the google.com homepage search box—consent pages often lack input[name=q]. ` +
               `When locating content or controls, use fuzzy strategies before exact selectors: toLowerCase + includes on innerText/textContent; substring attribute matches; document.evaluate with contains() for text; collect candidate buttons/links and score by how well their visible text matches the user's words (partial, order-agnostic). If the node is missing, search inside iframes and open shadow roots, or return a short list of field metadata (placeholder, name, aria-label) to refine the next step. ` +
               `If the result is empty or wrong, adjust the script rather than repeating it unchanged. ` +
               `Omitting return yields scriptCompletedWithoutReturn—follow with a short script that returns evidence (e.g. href or a text excerpt).`,
