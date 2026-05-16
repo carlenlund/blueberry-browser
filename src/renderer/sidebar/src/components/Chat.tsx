@@ -71,9 +71,9 @@ const StreamingText: React.FC<{ content: string }> = ({ content }) => {
 }
 
 // Markdown Renderer Component
-const Markdown: React.FC<{ content: string }> = ({ content }) => (
+const Markdown: React.FC<{ content: string, linkCallback: (content: string) => void }> = ({ content, linkCallback }) => (
     <div className="prose prose-sm dark:prose-invert max-w-none 
-                    prose-headings:text-foreground prose-p:text-foreground 
+                    prose-headings:text-foreground prose-p:text-foreground prose-p:mt-0 prose-p:mb-4 [&_p:last-child]:mb-0
                     prose-strong:text-foreground prose-ul:text-foreground 
                     prose-ol:text-foreground prose-li:text-foreground
                     prose-a:text-primary hover:prose-a:underline
@@ -84,6 +84,48 @@ const Markdown: React.FC<{ content: string }> = ({ content }) => (
         <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkBreaks]}
             components={{
+                // Preflight removes default <p> margins; typography plugin is not installed,
+                // so prose-* classes do not apply — spacing must be explicit.
+                p: ({ children, ...props }) => (
+                    <p className={cn('text-foreground leading-relaxed [&:not(:last-child)]:mb-4')} {...props}>
+                        {children}
+                    </p>
+                ),
+                // remark-breaks turns single newlines into <br>; treat as a paragraph-ish gap.
+                br: (props) => <br className="block mb-4" {...props} />,
+                // Preflight strips list markers/padding — restore normal list layout.
+                ul: ({ children, className, ...props }) => (
+                    <ul
+                        className={cn(
+                            'my-3 list-outside list-disc space-y-1 pl-5 text-foreground',
+                            'has-[input[type=checkbox]]:list-none has-[input[type=checkbox]]:space-y-2 has-[input[type=checkbox]]:pl-0',
+                            className,
+                        )}
+                        {...props}
+                    >
+                        {children}
+                    </ul>
+                ),
+                ol: ({ children, className, ...props }) => (
+                    <ol
+                        className={cn('my-3 list-outside list-decimal space-y-1 pl-5 text-foreground', className)}
+                        {...props}
+                    >
+                        {children}
+                    </ol>
+                ),
+                li: ({ children, ...props }) => (
+                    <li
+                        className={cn(
+                            'leading-relaxed text-foreground marker:text-foreground',
+                            '[&_p:not(:last-child)]:mb-2 [&_ul]:mt-2 [&_ol]:mt-2',
+                            '[&:has(input[type=checkbox])]:flex [&:has(input[type=checkbox])]:items-start [&:has(input[type=checkbox])]:gap-2',
+                        )}
+                        {...props}
+                    >
+                        {children}
+                    </li>
+                ),
                 // Custom code block styling
                 code: ({ node, className, children, ...props }) => {
                     const inline = !className
@@ -99,14 +141,12 @@ const Markdown: React.FC<{ content: string }> = ({ content }) => (
                 },
                 // Custom link styling
                 a: ({ children, href }) => (
-                    <a
-                        href={href}
-                        className="text-primary hover:underline"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                    <button
+                        className="cursor-pointer text-primary hover:underline"
+                        onClick={() => linkCallback(`${children} (${href ?? ''})`)}
                     >
                         {children}
-                    </a>
+                    </button>
                 ),
             }}
         >
@@ -116,16 +156,17 @@ const Markdown: React.FC<{ content: string }> = ({ content }) => (
 )
 
 // Assistant Message Component - appears on the left
-const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = ({
+const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean; linkCallback: (content: string) => void }> = ({
     content,
-    isStreaming
+    isStreaming,
+    linkCallback
 }) => (
     <div className="relative w-full animate-fade-in">
         <div className="py-1">
             {isStreaming ? (
                 <StreamingText content={content} />
             ) : (
-                <Markdown content={content} />
+                <Markdown content={content} linkCallback={linkCallback} />
             )}
         </div>
     </div>
@@ -141,10 +182,10 @@ const LoadingIndicator: React.FC = () => {
 
     return (
         <div className={cn(
-            "transition-transform duration-300 ease-in-out",
+            "p-4 transition-transform duration-300 ease-in-out",
             isVisible ? "scale-100" : "scale-0"
         )}>
-            ...
+            <span className="text-3xl animate-pulse">...</span>
         </div>
     )
 }
@@ -188,7 +229,7 @@ const ChatInput: React.FC<{
 
     return (
         <div className={cn(
-            "w-full border p-3 rounded-3xl bg-background dark:bg-secondary",
+            "mx-auto max-w-lg w-full border p-3 rounded-3xl bg-background dark:bg-secondary",
             "shadow-chat animate-spring-scale outline-none transition-all duration-200",
             isFocused ? "border-primary/20 dark:border-primary/30" : "border-border"
         )}>
@@ -243,13 +284,15 @@ interface ConversationTurn {
 const ConversationTurnComponent: React.FC<{
     turn: ConversationTurn
     isLoading?: boolean
-}> = ({ turn, isLoading }) => (
+    linkCallback: (content: string) => void
+}> = ({ turn, isLoading, linkCallback }) => (
     <div className="pt-12 flex flex-col gap-8">
         {turn.user && <UserMessage content={turn.user.content} />}
         {turn.assistant && (
             <AssistantMessage
                 content={turn.assistant.content}
                 isStreaming={turn.assistant.isStreaming}
+                linkCallback={linkCallback}
             />
         )}
         {isLoading && (
@@ -286,11 +329,15 @@ export const Chat: React.FC = () => {
     const showLoadingAfterLastTurn = isLoading &&
         messages[messages.length - 1]?.role === 'user'
 
+    const linkCallback = (content: string) => {
+        sendMessage(`${content}`);
+    }
+
     return (
         <div className="h-full flex flex-col bg-background">
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto">
-                <div className="h-8 max-w-3xl mx-auto px-4">
+                <div className="h-8 mx-auto px-4">
                     {/* New Chat Button - Floating */}
                     {messages.length > 0 && (
                         <Button
@@ -304,7 +351,7 @@ export const Chat: React.FC = () => {
                     )}
                 </div>
 
-                <div className="pb-4 relative max-w-3xl mx-auto px-4">
+                <div className="pb-4 relative max-w-lg mx-auto">
 
                     {messages.length === 0 ? (
                         // Empty State
@@ -328,6 +375,7 @@ export const Chat: React.FC = () => {
                                         showLoadingAfterLastTurn &&
                                         index === conversationTurns.length - 1
                                     }
+                                    linkCallback={linkCallback}
                                 />
                             ))}
                         </>

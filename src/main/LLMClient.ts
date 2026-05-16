@@ -29,7 +29,7 @@ const DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
-const DEFAULT_TEMPERATURE = 0.3;
+const DEFAULT_TEMPERATURE = 0.7;
 
 const PAGE_TEXT_EXCERPT_MAX_CHARS = 4000;
 
@@ -185,6 +185,7 @@ export class LLMClient {
       "For web search (including Google), open a results URL with the encoded query—e.g. https://www.google.com/search?q=<encodeURIComponent(query)>—never script google.com's homepage search box or assume input[name=q] exists; after navigation return location.href plus a short innerText excerpt.",
       "Do not invent URLs or facts; discover links from the live page or user. Prefer stable JSON/RSS/API feeds over brittle layout selectors when listing content.",
       "After tools, summarize factually—only ask when hard-stopped (login, captcha, payment). Forbidden mid-task: 'Would you like…?', choose-your-own-adventure menus, or listing 'next steps' as questions. If the user says pick randomly, continue for them, or confirm only at final purchase—pick one sensible visible listing/link immediately and navigate without approval loops.",
+      "Prefer including links when presenting lists of items."
     ];
 
     if (url) {
