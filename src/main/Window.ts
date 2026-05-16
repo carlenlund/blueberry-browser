@@ -23,7 +23,7 @@ export class Window {
       trafficLightPosition: { x: 15, y: 13 },
     });
 
-    this._baseWindow.setMinimumSize(1000, 800);
+    this._baseWindow.setMinimumSize(1000, 500);
 
     this._topBar = new TopBar(this._baseWindow);
     this._sideBar = new SideBar(this._baseWindow);

@@ -141,6 +141,15 @@ export class Tab {
     }
   }
 
+  /**
+   * After injected JS that may start navigation (e.g. anchor.click()), Chromium updates URL/DOM asynchronously.
+   * Without a short pause, the next tool call can read stale tab.url / innerText and loop on the old page.
+   */
+  async settleAfterInjectedScript(minMs: number = 450): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, minMs));
+    await this.ensureDocumentReady();
+  }
+
   loadURL(url: string): Promise<void> {
     this._url = url;
     return this.webContentsView.webContents.loadURL(url);

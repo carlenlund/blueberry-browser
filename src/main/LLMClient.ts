@@ -14,9 +14,6 @@ import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
 
-// Flags
-const USE_SCREENSHOT = false;
-
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
 
@@ -28,11 +25,13 @@ interface ChatRequest {
 type LLMProvider = "openai" | "anthropic";
 
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o",
+  openai: "gpt-4o-mini",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
 const DEFAULT_TEMPERATURE = 0.3;
+
+const PAGE_TEXT_EXCERPT_MAX_CHARS = 4000;
 
 export class LLMClient {
   private readonly webContents: WebContents;
@@ -108,44 +107,17 @@ export class LLMClient {
 
   async sendChatMessage(request: ChatRequest): Promise<void> {
     try {
-      // Get screenshot from active tab if available
-      let screenshot: string | null = null;
-      if (this.window?.activeTab) {
-        try {
-          const image = await this.window?.activeTab.screenshot();
-          screenshot = image.toDataURL();
-        } catch (error) {
-          console.error("Failed to capture screenshot:", error);
-        }
-      }
-
-      // Build user message content with screenshot first, then text
-      const userContent: any[] = [];
-      
-      // Add screenshot as the first part if available
-      if (USE_SCREENSHOT && screenshot) {
-        userContent.push({
-          type: "image",
-          image: screenshot,
-        });
-      }
-      
-      // Add text content
-      userContent.push({
-        type: "text",
-        text: request.message,
-      });
-
-      // Create user message in CoreMessage format
       const userMessage: CoreMessage = {
         role: "user",
-        content: userContent.length === 1 ? request.message : userContent,
+        content: request.message,
       };
 
-      console.log('@@@@@@@@@ userMessage @@@@@@@@@');
-      console.log(userMessage);
-      console.log('@@@@@@@@@ end userMessage @@@@@@@@@');
-      
+      if (process.env.NODE_ENV === "development") {
+        console.log("@@@@@@@@@ userMessage @@@@@@@@@");
+        console.log(userMessage);
+        console.log("@@@@@@@@@ end userMessage @@@@@@@@@");
+      }
+
       this.messages.push(userMessage);
 
       // Send updated messages to renderer
@@ -207,18 +179,12 @@ export class LLMClient {
 
   private buildSystemPrompt(url: string | null, pageText: string | null): string {
     const parts: string[] = [
-      "You are a helpful assistant inside a web browser; the user can analyze and discuss pages with you.",
-      "Use the current tab URL and the page excerpt below when they help; navigate or open another URL when the user asks or the answer is not here.",
-      "You can run scripts in the page via web_content_visit_and_inject_javascript: pass function-body JavaScript and use return to send back the value you need.",
-      "Treat each page as unknown: base selectors and clicks on what you see in excerpts and tool results; if something fails or is empty, try a different approach instead of repeating the same script.",
-      "When finding elements or text, prefer fuzzy matching: case-insensitive and partial matches (e.g. includes, normalize whitespace), attribute substring selectors ([href*=\"...\"], [placeholder*=\"...\"], [aria-label*=\"...\"]; in Chromium you may use the i flag on attribute selectors for case-insensitivity), XPath contains(), walking clickable nodes and picking the closest label to the user's phrase; if exact wording fails, try shorter substrings, synonyms, or alternate spellings before giving up.",
-      "If querySelector returns null, the control may be in an iframe (iterate iframes and query iframe.contentDocument when allowed) or in a shadow root (host.shadowRoot); failing that, return a compact diagnostic: list inputs/buttons with tagName, type, placeholder, name, id, aria-label (cap ~40) so the next script can fuzzy-match.",
-      "On search homepages, consent or overlay dialogs can block the query box—try visible textarea/input near the top of the tree, [name=q], [type=search], or dismissing common consent buttons before assuming the selector is wrong.",
-      "When interacting with the page, prefer matching visible labels and avoid one-off generic selectors that might hit browser chrome; do not submit forms or post content unless the user clearly wants that.",
-      "Do not invent URLs or facts; briefly confirm the page matches the task before summarizing; ask the user if critical context is missing.",
-      "Find page URLs by checking results on Google Search. Don't use remembered page URLs.",
-      "When the user asks to search the web or \"Google\" something, prefer navigating with web_content_visit_and_inject_javascript to https://www.google.com/search?q= plus encodeURIComponent(...) for the query terms instead of typing into google.com's homepage. Cookie/consent interstitials and regional shells often omit input[name=q], which makes homepage scripting unreliable.",
-      "After navigating to a search results URL, use return with location.href and a short snippet of document.body.innerText (or similar) so you can verify results loaded before replying."
+      "You are the user's assistant inside this browser: use the URL and page excerpt below when helpful; navigate or open URLs when needed.",
+      "Use tool web_content_visit_and_inject_javascript with function-body JavaScript and return values you need; chain many tool calls in one turn until the task stalls (login, captcha, payment card entry—never type card/bank secrets—or missing data).",
+      "Treat the DOM as unknown: fuzzy-match visible text and attributes; querySelector has no :contains—match innerText in JS; try iframes and shadow roots if nodes are missing; discover links with querySelectorAll('a[href]') and score by visible text/href instead of one brittle href*= substring guess; return compact diagnostics when stuck.",
+      "For web search (including Google), open a results URL with the encoded query—e.g. https://www.google.com/search?q=<encodeURIComponent(query)>—never script google.com's homepage search box or assume input[name=q] exists; after navigation return location.href plus a short innerText excerpt.",
+      "Do not invent URLs or facts; discover links from the live page or user. Prefer stable JSON/RSS/API feeds over brittle layout selectors when listing content.",
+      "After tools, summarize factually—only ask when hard-stopped (login, captcha, payment). Forbidden mid-task: 'Would you like…?', choose-your-own-adventure menus, or listing 'next steps' as questions. If the user says pick randomly, continue for them, or confirm only at final purchase—pick one sensible visible listing/link immediately and navigate without approval loops.",
     ];
 
     if (url) {
@@ -226,7 +192,7 @@ export class LLMClient {
     }
 
     if (pageText) {
-      const maxChars = 8000;
+      const maxChars = PAGE_TEXT_EXCERPT_MAX_CHARS;
       const excerpt =
         pageText.length > maxChars
           ? `${pageText.slice(0, maxChars)}\n...[page text truncated]`
@@ -251,17 +217,23 @@ export class LLMClient {
         system,
         messages,
         temperature: DEFAULT_TEMPERATURE,
-        maxRetries: 5,
+        maxRetries: 8,
         abortSignal: undefined, // Could add abort controller for cancellation
-        stopWhen: stepCountIs(16), // NOTE(Carl): Arbitrary limit so we have enough steps for processing data and navigating.
+        stopWhen: stepCountIs(40), // Shopping/search flows need many tool rounds; raise if turns truncate mid-checkout.
         tools: {
           web_content_visit_and_inject_javascript: {
             description:
               `Loads the URL in the active tab (if needed), then runs your script. ` +
+              `The model does not receive page screenshots—always return structured findings from the DOM (e.g. href, innerText excerpts, arrays of candidate links) so the next step can proceed. ` +
+              `One user request may require many consecutive calls—keep going through navigation, clicks, and cart without ending the turn early. ` +
               `Pass function-body code; use return to produce the result. ` +
-              `For Google web searches, load https://www.google.com/search?q=<encoded query> directly rather than scripting the google.com homepage search box—consent pages often lack input[name=q]. ` +
+              `For site search, when you can infer or construct a results URL with the query in the query string, load that URL directly instead of scripting the homepage search box (consent pages and SPAs often lack stable input[name=q] / type=search). ` +
               `When locating content or controls, use fuzzy strategies before exact selectors: toLowerCase + includes on innerText/textContent; substring attribute matches; document.evaluate with contains() for text; collect candidate buttons/links and score by how well their visible text matches the user's words (partial, order-agnostic). If the node is missing, search inside iframes and open shadow roots, or return a short list of field metadata (placeholder, name, aria-label) to refine the next step. ` +
+              `When the goal is structured list or feed data, try the host's JSON/RSS/API surfaces if you can find or infer them before depending on fragile list markup. ` +
               `If the result is empty or wrong, adjust the script rather than repeating it unchanged. ` +
+              `CSS :contains() is not supported in querySelector (that is jQuery-only)—iterate nodes and match innerText/textContent in JS instead. ` +
+              `Important labels often map to relative paths (e.g. /kompass/...) that do not include brand substrings like valkompassen; collect candidate anchors as { innerText, href } or set location.href to the resolved absolute URL rather than filtering href by the wrong substring. ` +
+              `After clicks or submits that navigate, always return { href: location.href, preview: document.body.innerText.slice(0, 600) } in the same script once settled (the host waits briefly after injection so URL/DOM can update). ` +
               `Omitting return yields scriptCompletedWithoutReturn—follow with a short script that returns evidence (e.g. href or a text excerpt).`,
             inputSchema: jsonSchema<{ url: string; script: string }>({
               type: "object",
@@ -300,6 +272,7 @@ export class LLMClient {
                 }
 
                 let runResult = await tab.runJs(script);
+                await tab.settleAfterInjectedScript();
                 if (runResult === undefined) {
                   runResult = {
                     scriptCompletedWithoutReturn: true,
