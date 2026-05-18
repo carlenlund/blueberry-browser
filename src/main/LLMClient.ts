@@ -25,7 +25,7 @@ interface ChatRequest {
 type LLMProvider = "openai" | "anthropic";
 
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o-mini",
+  openai: "gpt-4o",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
@@ -183,6 +183,7 @@ export class LLMClient {
       "Use tool web_content_visit_and_inject_javascript with function-body JavaScript and return values you need; chain many tool calls in one turn until the task stalls (login, captcha, payment card entry—never type card/bank secrets—or missing data).",
       "Treat the DOM as unknown: fuzzy-match visible text and attributes; querySelector has no :contains—match innerText in JS; try iframes and shadow roots if nodes are missing; discover links with querySelectorAll('a[href]') and score by visible text/href instead of one brittle href*= substring guess; return compact diagnostics when stuck.",
       "For web search (including Google), open a results URL with the encoded query—e.g. https://www.google.com/search?q=<encodeURIComponent(query)>—never script google.com's homepage search box or assume input[name=q] exists; after navigation return location.href plus a short innerText excerpt.",
+      "Never trust memorized or historic DOM for any host (tutorial snippets rot quickly—verify on the loaded document). Prefer the host's documented RSS/API/JSON for list tasks when you know it—for example hacker-news-style front pages typically expose machine-readable feeds on the same hostname so you never need brittle table-row CSS.",
       "Do not invent URLs or facts; discover links from the live page or user. Prefer stable JSON/RSS/API feeds over brittle layout selectors when listing content.",
       "After tools, summarize factually—only ask when hard-stopped (login, captcha, payment). Forbidden mid-task: 'Would you like…?', choose-your-own-adventure menus, or listing 'next steps' as questions. If the user says pick randomly, continue for them, or confirm only at final purchase—pick one sensible visible listing/link immediately and navigate without approval loops.",
       "Prefer including links when presenting lists of items."
@@ -231,6 +232,8 @@ export class LLMClient {
               `For site search, when you can infer or construct a results URL with the query in the query string, load that URL directly instead of scripting the homepage search box (consent pages and SPAs often lack stable input[name=q] / type=search). ` +
               `When locating content or controls, use fuzzy strategies before exact selectors: toLowerCase + includes on innerText/textContent; substring attribute matches; document.evaluate with contains() for text; collect candidate buttons/links and score by how well their visible text matches the user's words (partial, order-agnostic). If the node is missing, search inside iframes and open shadow roots, or return a short list of field metadata (placeholder, name, aria-label) to refine the next step. ` +
               `When the goal is structured list or feed data, try the host's JSON/RSS/API surfaces if you can find or infer them before depending on fragile list markup. ` +
+              `If the tool result includes scrapedEmptyArray and domDiscovery, your prior selectors missed the live DOM—do not repeat them; iterate linkSample anchors or switch to RSS/API. ` +
+              `Do not cite 'standard' selectors for a site unless they appear in classHintsOnPage or your own prior discovery on THAT URL—training data is unreliable for DOM. ` +
               `If the result is empty or wrong, adjust the script rather than repeating it unchanged. ` +
               `CSS :contains() is not supported in querySelector (that is jQuery-only)—iterate nodes and match innerText/textContent in JS instead. ` +
               `Important labels often map to relative paths (e.g. /kompass/...) that do not include brand substrings like valkompassen; collect candidate anchors as { innerText, href } or set location.href to the resolved absolute URL rather than filtering href by the wrong substring. ` +
@@ -269,7 +272,9 @@ export class LLMClient {
                 const alreadyOnPage = tab.url === url;
                 if (!alreadyOnPage) {
                   await tab.loadURL(url);
-                  await tab.settleAfterNavigation(500);
+                  await tab.settleAfterNavigation(3000);
+                } else {
+                  await tab.ensureDocumentReady();
                 }
 
                 let runResult = await tab.runJs(script);

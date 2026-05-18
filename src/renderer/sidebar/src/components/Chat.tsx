@@ -90,7 +90,7 @@ const Markdown: React.FC<{ content: string, linkCallback: (content: string) => v
                 ),
                 ol: ({ children, className, ...props }) => (
                     <ol
-                        className={cn('my-3 list-outside list-decimal space-y-1 pl-5 text-foreground', className)}
+                        className={cn('my-3 text-left list-outside list-decimal space-y-1 pl-5 text-foreground', className)}
                         {...props}
                     >
                         {children}
@@ -123,12 +123,13 @@ const Markdown: React.FC<{ content: string, linkCallback: (content: string) => v
                 },
                 // Custom link styling
                 a: ({ children, href }) => (
-                    <button
+                    <div
+                        role="button"
                         className="cursor-pointer text-primary hover:underline"
                         onClick={() => linkCallback(`${children} (${href ?? ''})`)}
                     >
                         {children}
-                    </button>
+                    </div>
                 ),
             }}
         >
