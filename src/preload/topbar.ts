@@ -23,8 +23,8 @@ const topBarAPI = {
     electronAPI.ipcRenderer.invoke("tab-reload", tabId),
 
   // Sidebar
-  toggleSidebar: () =>
-    electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+  toggleSidebar: (visible: boolean) =>
+    electronAPI.ipcRenderer.invoke("toggle-sidebar", visible),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

@@ -133,9 +133,13 @@ export class EventManager {
   }
 
   private handleSidebarEvents(): void {
-    // Toggle sidebar
-    ipcMain.handle("toggle-sidebar", () => {
-      this.mainWindow.sidebar.toggle();
+    // Set sidebar visibility
+    ipcMain.handle("toggle-sidebar", (_, visible: boolean) => {
+      if (visible) {
+        this.mainWindow.sidebar.show();
+      } else {
+        this.mainWindow.sidebar.hide();
+      }
       this.mainWindow.updateAllBounds();
       return true;
     });

@@ -23,7 +23,7 @@ interface TopBarAPI {
   reload: (tabId: string) => Promise<void>;
 
   // Sidebar
-  toggleSidebar: () => Promise<void>;
+  toggleSidebar: (visible: boolean) => Promise<void>;
 }
 
 declare global {

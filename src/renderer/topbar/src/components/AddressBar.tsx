@@ -38,6 +38,8 @@ export const AddressBar: React.FC = () => {
         }
 
         navigateToUrl(finalUrl)
+        setIsSidebarOpen(false)
+        window.topBarAPI?.toggleSidebar(false)
         setIsEditing(false)
         setIsFocused(false)
             ; (document.activeElement as HTMLElement)?.blur()
@@ -103,11 +105,9 @@ export const AddressBar: React.FC = () => {
     }
 
     const toggleSidebar = () => {
-        setIsSidebarOpen(!isSidebarOpen)
-        // Send IPC event to toggle sidebar
-        if (window.topBarAPI) {
-            window.topBarAPI.toggleSidebar()
-        }
+        const next = !isSidebarOpen
+        setIsSidebarOpen(next)
+        window.topBarAPI?.toggleSidebar(next)
     }
 
     return (
