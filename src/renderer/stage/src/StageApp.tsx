@@ -1,15 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
-import { GizmoHelper } from "@react-three/drei";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { GizmoHelper, Line, Text } from "@react-three/drei";
+import { ArrowUp, PanelRight, PanelRightClose } from "lucide-react";
 import * as THREE from "three";
 import { useDarkMode } from "@common/hooks/useDarkMode";
 import type { StageState, ThumbnailEvent, Thumbnails } from "./stageTypes";
-import {
-  extractSkyColorsFromDataUrl,
-  getSkyFallback,
-  StageSkyGradient,
-  type SkyGradientColors,
-} from "./stageSky";
 import {
   ARROW_KEYS,
   CAMERA_LOOK_AT_Y,
@@ -22,13 +17,365 @@ import {
 } from "./stageConstants";
 import { CameraRig } from "./components/CameraRig";
 import { Scene } from "./components/Scene";
-import { SignedAxisGizmo } from "./components/SignedAxisGizmo";
-import {
-  StageEmptyHint,
-  StageMiningButton,
-  StagePromptBar,
-  StageSidebarToggle,
-} from "./components/StageHud";
+
+type SkyGradientColors = { top: string; bottom: string };
+
+const SKY_FALLBACK_DARK: SkyGradientColors = { top: "#2d3a5c", bottom: "#121218" };
+const SKY_FALLBACK_LIGHT: SkyGradientColors = { top: "#b8cae8", bottom: "#eef1f8" };
+
+const SKY_VERTEX = /* glsl */ `
+varying vec3 vWorldPos;
+void main() {
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vWorldPos = worldPos.xyz;
+  gl_Position = projectionMatrix * viewMatrix * worldPos;
+}
+`;
+
+const SKY_FRAGMENT = /* glsl */ `
+uniform vec3 uTop;
+uniform vec3 uBottom;
+varying vec3 vWorldPos;
+void main() {
+  float t = smoothstep(-6.0, 20.0, vWorldPos.y);
+  gl_FragColor = vec4(mix(uBottom, uTop, t), 1.0);
+}
+`;
+
+function getSkyFallback(isDarkMode: boolean): SkyGradientColors {
+  return isDarkMode ? SKY_FALLBACK_DARK : SKY_FALLBACK_LIGHT;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("sky color image load failed"));
+    img.src = src;
+  });
+}
+
+function averageRgb(samples: number[][]): [number, number, number] | null {
+  if (samples.length === 0) return null;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const [sr, sg, sb] of samples) {
+    r += sr;
+    g += sg;
+    b += sb;
+  }
+  const n = samples.length;
+  return [r / n, g / n, b / n];
+}
+
+function tuneSkyChannel(
+  r: number,
+  g: number,
+  b: number,
+  isDarkMode: boolean,
+  band: "top" | "bottom"
+): string {
+  const c = new THREE.Color(r / 255, g / 255, b / 255);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  hsl.s = THREE.MathUtils.clamp(hsl.s * 1.15 + 0.08, 0.12, 0.72);
+  if (band === "top") {
+    hsl.l = isDarkMode
+      ? THREE.MathUtils.clamp(hsl.l * 0.55 + 0.12, 0.14, 0.38)
+      : THREE.MathUtils.clamp(hsl.l * 0.85 + 0.22, 0.45, 0.82);
+  } else {
+    hsl.l = isDarkMode
+      ? THREE.MathUtils.clamp(hsl.l * 0.35 + 0.06, 0.06, 0.2)
+      : THREE.MathUtils.clamp(hsl.l * 0.7 + 0.18, 0.72, 0.96);
+  }
+  c.setHSL(hsl.h, hsl.s, hsl.l);
+  return `#${c.getHexString()}`;
+}
+
+async function extractSkyColorsFromDataUrl(
+  dataUrl: string,
+  isDarkMode: boolean
+): Promise<SkyGradientColors> {
+  const fallback = getSkyFallback(isDarkMode);
+  try {
+    const img = await loadImage(dataUrl);
+    const size = 48;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return fallback;
+
+    ctx.drawImage(img, 0, 0, size, size);
+    const { data } = ctx.getImageData(0, 0, size, size);
+
+    const topSamples: number[][] = [];
+    const bottomSamples: number[][] = [];
+    const allSamples: number[][] = [];
+
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        const a = data[i + 3];
+        if (a < 100) continue;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+        if (lum < 0.04 || lum > 0.97) continue;
+
+        const sample = [r, g, b];
+        allSamples.push(sample);
+        if (y < size * 0.45) topSamples.push(sample);
+        if (y >= size * 0.55) bottomSamples.push(sample);
+      }
+    }
+
+    const topAvg = averageRgb(topSamples.length > 0 ? topSamples : allSamples);
+    const bottomAvg = averageRgb(bottomSamples.length > 0 ? bottomSamples : allSamples);
+    if (!topAvg || !bottomAvg) return fallback;
+
+    return {
+      top: tuneSkyChannel(topAvg[0], topAvg[1], topAvg[2], isDarkMode, "top"),
+      bottom: tuneSkyChannel(bottomAvg[0], bottomAvg[1], bottomAvg[2], isDarkMode, "bottom"),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+const StageSkyGradient: React.FC<{
+  topColor: string;
+  bottomColor: string;
+}> = ({ topColor, bottomColor }) => {
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
+  const currentTop = useRef(new THREE.Color(topColor));
+  const currentBottom = useRef(new THREE.Color(bottomColor));
+  const targetTop = useRef(new THREE.Color(topColor));
+  const targetBottom = useRef(new THREE.Color(bottomColor));
+
+  const uniforms = useMemo(
+    () => ({
+      uTop: { value: new THREE.Color(topColor) },
+      uBottom: { value: new THREE.Color(bottomColor) },
+    }),
+    []
+  );
+
+  useEffect(() => {
+    targetTop.current.set(topColor);
+    targetBottom.current.set(bottomColor);
+  }, [topColor, bottomColor]);
+
+  useFrame((_, delta) => {
+    const mat = materialRef.current;
+    if (!mat) return;
+    const t = 1 - Math.exp(-3.5 * delta);
+    currentTop.current.lerp(targetTop.current, t);
+    currentBottom.current.lerp(targetBottom.current, t);
+    mat.uniforms.uTop.value.copy(currentTop.current);
+    mat.uniforms.uBottom.value.copy(currentBottom.current);
+  });
+
+  return (
+    <mesh position={[0, 4, 0]} frustumCulled={false} renderOrder={-1000}>
+      <sphereGeometry args={[140, 40, 20]} />
+      <shaderMaterial
+        ref={materialRef}
+        uniforms={uniforms}
+        vertexShader={SKY_VERTEX}
+        fragmentShader={SKY_FRAGMENT}
+        side={THREE.BackSide}
+        depthWrite={false}
+        depthTest={false}
+      />
+    </mesh>
+  );
+};
+
+const GIZMO_SCALE = 40;
+const GIZMO_AXIS_LENGTH = 1;
+const GIZMO_LABEL_OFFSET = 0.18;
+
+const SignedAxis: React.FC<{
+  axis: "x" | "y" | "z";
+  color: string;
+  labelColor: string;
+  negativeOpacity: number;
+}> = ({ axis, color, labelColor, negativeOpacity }) => {
+  const positive: [number, number, number] =
+    axis === "x"
+      ? [GIZMO_AXIS_LENGTH, 0, 0]
+      : axis === "y"
+        ? [0, GIZMO_AXIS_LENGTH, 0]
+        : [0, 0, GIZMO_AXIS_LENGTH];
+  const negative: [number, number, number] =
+    axis === "x"
+      ? [-GIZMO_AXIS_LENGTH, 0, 0]
+      : axis === "y"
+        ? [0, -GIZMO_AXIS_LENGTH, 0]
+        : [0, 0, -GIZMO_AXIS_LENGTH];
+  const plusLabelPos: [number, number, number] =
+    axis === "x"
+      ? [GIZMO_AXIS_LENGTH + GIZMO_LABEL_OFFSET, 0, 0]
+      : axis === "y"
+        ? [0, GIZMO_AXIS_LENGTH + GIZMO_LABEL_OFFSET, 0]
+        : [0, 0, GIZMO_AXIS_LENGTH + GIZMO_LABEL_OFFSET];
+  const minusLabelPos: [number, number, number] =
+    axis === "x"
+      ? [-GIZMO_AXIS_LENGTH - GIZMO_LABEL_OFFSET, 0, 0]
+      : axis === "y"
+        ? [0, -GIZMO_AXIS_LENGTH - GIZMO_LABEL_OFFSET, 0]
+        : [0, 0, -GIZMO_AXIS_LENGTH - GIZMO_LABEL_OFFSET];
+
+  return (
+    <group>
+      <Line points={[[0, 0, 0], positive]} color={color} lineWidth={3} />
+      <Line
+        points={[[0, 0, 0], negative]}
+        color={color}
+        transparent
+        opacity={negativeOpacity}
+        lineWidth={3}
+      />
+      <Text position={plusLabelPos} fontSize={0.28} color={labelColor} anchorX="center" anchorY="middle">
+        +{axis.toUpperCase()}
+      </Text>
+      <Text
+        position={minusLabelPos}
+        fontSize={0.24}
+        color={labelColor}
+        fillOpacity={negativeOpacity}
+        anchorX="center"
+        anchorY="middle"
+      >
+        -{axis.toUpperCase()}
+      </Text>
+    </group>
+  );
+};
+
+const SignedAxisGizmo: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
+  const negativeOpacity = isDarkMode ? 0.4 : 0.5;
+  const labelColor = isDarkMode ? "#f5f5fa" : "#1a1a1f";
+  return (
+    <group scale={GIZMO_SCALE}>
+      <SignedAxis
+        axis="x"
+        color="#ff4d4f"
+        labelColor={labelColor}
+        negativeOpacity={negativeOpacity}
+      />
+      <SignedAxis
+        axis="y"
+        color="#52c41a"
+        labelColor={labelColor}
+        negativeOpacity={negativeOpacity}
+      />
+      <SignedAxis
+        axis="z"
+        color="#1677ff"
+        labelColor={labelColor}
+        negativeOpacity={negativeOpacity}
+      />
+    </group>
+  );
+};
+
+const StageEmptyHint: React.FC = () => (
+  <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-sm text-[rgb(var(--muted-foreground))]">
+    Visit a page to populate the stage
+  </div>
+);
+
+const StagePromptBar: React.FC<{
+  promptInputRef: React.RefObject<HTMLInputElement | null>;
+  prompt: string;
+  onPromptChange: (value: string) => void;
+  onPromptKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  onPromptFocus: () => void;
+  onPromptBlur: () => void;
+  onSubmit: () => void;
+  disabled: boolean;
+  sendDisabled: boolean;
+}> = ({
+  promptInputRef,
+  prompt,
+  onPromptChange,
+  onPromptKeyDown,
+  onPromptFocus,
+  onPromptBlur,
+  onSubmit,
+  disabled,
+  sendDisabled,
+}) => (
+  <div className="absolute bottom-4 left-1/2 z-10 flex w-[min(32rem,calc(100%-6rem))] -translate-x-1/2 items-center gap-1 rounded-2xl border border-gray-400 bg-[rgb(var(--background))]/92 p-1 shadow-lg backdrop-blur-sm">
+    <input
+      ref={promptInputRef}
+      type="text"
+      value={prompt}
+      onChange={(e) => onPromptChange(e.target.value)}
+      onKeyDown={onPromptKeyDown}
+      onFocus={onPromptFocus}
+      onBlur={onPromptBlur}
+      placeholder="Ask the agent…"
+      disabled={disabled}
+      className="min-w-0 flex-1 rounded-xl bg-transparent py-3 pl-4 pr-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[#888] outline-none disabled:opacity-40"
+      aria-label="Prompt"
+    />
+    <button
+      type="button"
+      onClick={onSubmit}
+      disabled={sendDisabled}
+      aria-label="Send message"
+      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
+    >
+      <ArrowUp className="size-5" aria-hidden />
+    </button>
+  </div>
+);
+
+const StageMiningButton: React.FC<{
+  miningEnabled: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}> = ({ miningEnabled, disabled, onToggle }) => (
+  <button
+    type="button"
+    aria-label={miningEnabled ? "Disable mining" : "Enable mining"}
+    title={miningEnabled ? "Disable mining" : "Enable mining"}
+    disabled={disabled}
+    className={`absolute bottom-4 left-4 z-10 flex h-11 w-11 items-center justify-center rounded-xl border shadow-md backdrop-blur-sm transition disabled:pointer-events-none disabled:opacity-40 ${
+      miningEnabled
+        ? "border-red-600 bg-red-500 text-white hover:bg-red-400"
+        : "border-[rgb(var(--border))] bg-[rgb(var(--background))]/90 text-[rgb(var(--foreground))] hover:bg-[rgb(var(--muted))]"
+    }`}
+    onClick={onToggle}
+  >
+    <span aria-hidden>⛏</span>
+  </button>
+);
+
+const StageSidebarToggle: React.FC<{
+  sidebarOpen: boolean;
+  onToggle: () => void;
+}> = ({ sidebarOpen, onToggle }) => (
+  <button
+    type="button"
+    aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+    title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+    className="absolute bottom-4 right-4 z-10 flex h-11 w-11 items-center justify-center rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/90 text-[rgb(var(--foreground))] shadow-md backdrop-blur-sm transition hover:bg-[rgb(var(--muted))]"
+    onClick={onToggle}
+  >
+    {sidebarOpen ? (
+      <PanelRightClose className="size-5" aria-hidden />
+    ) : (
+      <PanelRight className="size-5" aria-hidden />
+    )}
+  </button>
+);
 
 export const StageApp: React.FC = () => {
   const { isDarkMode } = useDarkMode();

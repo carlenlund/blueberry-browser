@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type {
   Card,
@@ -26,11 +26,177 @@ import {
   NEW_CARD_WALK_DELAY_MS,
   PRECLICK_RUN_MS,
   PREMOVE_MARK_MS,
+  SPEECH_TRIANGLE_APEX_NDC_X_OFFSET,
+  SPEECH_TRIANGLE_APEX_NDC_Y_OFFSET,
+  SPEECH_TRIANGLE_EDGE_NDC_X,
+  SPEECH_TRIANGLE_NDC_Y_SPREAD,
 } from "../stageConstants";
-import { avatarToCardNorm, findCardAtStagePosition, hostname } from "../stageLayout";
-import { Avatar } from "./Avatar";
+import { Avatar, findCardAtStagePosition } from "./Avatar";
 import { CardMesh } from "./CardMesh";
-import { SpeechBubbleTriangle } from "./SpeechBubbleTriangle";
+
+function ndcToWorldOnPlane(
+  camera: THREE.Camera,
+  ndcX: number,
+  ndcY: number,
+  planeY: number,
+  target: THREE.Vector3
+): THREE.Vector3 {
+  const ndc = new THREE.Vector3(ndcX, ndcY, 0.5);
+  ndc.unproject(camera);
+  const dir = ndc.sub(camera.position).normalize();
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY);
+  const hit = new THREE.Ray(camera.position, dir).intersectPlane(plane, target);
+  return hit ?? target.copy(ndc);
+}
+
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function avatarToCardNorm(
+  avatarX: number,
+  avatarZ: number,
+  cardX: number,
+  imageAspect: number
+): { normX: number; normY: number } {
+  const imageWidth = imageAspect >= 1 ? CARD_LENGTH : CARD_LENGTH * imageAspect;
+  const localX = avatarX - cardX;
+  const localZ = -avatarZ;
+  const cardNormX = THREE.MathUtils.clamp(localX / CARD_LENGTH + 0.5, 0, 1);
+  const cardNormDepth = THREE.MathUtils.clamp(localZ / CARD_LENGTH + 0.5, 0, 1);
+  const imageNormW = imageWidth / CARD_LENGTH;
+  const padX = (1 - imageNormW) / 2;
+  const normX = THREE.MathUtils.clamp((cardNormX - padX) / imageNormW, 0, 1);
+  const normY = THREE.MathUtils.clamp(1.0 - cardNormDepth, 0, 1);
+  return { normX, normY };
+}
+
+const SpeechBubbleTriangle: React.FC<{
+  avatarSpeechApexWorldRef: React.RefObject<THREE.Vector3>;
+  visible: boolean;
+  isDarkMode: boolean;
+}> = ({ avatarSpeechApexWorldRef, visible, isDarkMode }) => {
+  const { camera } = useThree();
+  const meshRef = useRef<THREE.Mesh>(null);
+  const positions = useMemo(() => new Float32Array(9), []);
+  const geometry = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    return geo;
+  }, [positions]);
+
+  const outlineVecs = useRef([
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+  ]);
+  const edgeScratchA = useRef(new THREE.Vector3());
+  const edgeScratchB = useRef(new THREE.Vector3());
+  const apexScratch = useRef(new THREE.Vector3());
+  const fillColor = isDarkMode ? "#141414" : "#ffffff";
+  const outlineColor = isDarkMode ? "#5c5c68" : "#b4b4be";
+
+  const outlineLine = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    const mat = new THREE.LineBasicMaterial({
+      color: outlineColor,
+      depthWrite: true,
+      depthTest: true,
+    });
+    return new THREE.Line(geo, mat);
+  }, [outlineColor]);
+
+  useEffect(() => {
+    outlineLine.material.color.set(outlineColor);
+  }, [outlineColor, outlineLine]);
+
+  const anchorNdcScratch = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    if (!visible) return;
+    const anchor = avatarSpeechApexWorldRef.current;
+    const planeY = anchor.y;
+    anchorNdcScratch.current.copy(anchor).project(camera);
+    const edgeY = THREE.MathUtils.clamp(anchorNdcScratch.current.y, -0.92, 0.92);
+    const apexNdcY = THREE.MathUtils.clamp(
+      edgeY - SPEECH_TRIANGLE_APEX_NDC_Y_OFFSET,
+      -0.92,
+      0.92
+    );
+    const apexNdcX = THREE.MathUtils.clamp(
+      anchorNdcScratch.current.x - SPEECH_TRIANGLE_APEX_NDC_X_OFFSET,
+      -1,
+      1
+    );
+    const apex = ndcToWorldOnPlane(
+      camera,
+      apexNdcX,
+      apexNdcY,
+      planeY,
+      apexScratch.current
+    );
+    const b1 = ndcToWorldOnPlane(
+      camera,
+      SPEECH_TRIANGLE_EDGE_NDC_X,
+      edgeY - SPEECH_TRIANGLE_NDC_Y_SPREAD,
+      planeY,
+      edgeScratchA.current
+    );
+    const b2 = ndcToWorldOnPlane(
+      camera,
+      SPEECH_TRIANGLE_EDGE_NDC_X,
+      edgeY + SPEECH_TRIANGLE_NDC_Y_SPREAD,
+      planeY,
+      edgeScratchB.current
+    );
+
+    positions[0] = apex.x;
+    positions[1] = apex.y;
+    positions[2] = apex.z;
+    positions[3] = b1.x;
+    positions[4] = planeY;
+    positions[5] = b1.z;
+    positions[6] = b2.x;
+    positions[7] = planeY;
+    positions[8] = b2.z;
+
+    const posAttr = geometry.getAttribute("position") as THREE.BufferAttribute;
+    posAttr.needsUpdate = true;
+    geometry.computeVertexNormals();
+
+    const [p0, p1, p2, p3] = outlineVecs.current;
+    p0.copy(apex);
+    p1.copy(b1);
+    p2.copy(b2);
+    p3.copy(apex);
+    outlineLine.geometry.setFromPoints(outlineVecs.current);
+  });
+
+  if (!visible) return null;
+
+  return (
+    <group>
+      <mesh ref={meshRef} geometry={geometry} renderOrder={10}>
+        <meshBasicMaterial
+          color={fillColor}
+          side={THREE.DoubleSide}
+          depthWrite
+          depthTest
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
+          toneMapped={false}
+        />
+      </mesh>
+      <primitive object={outlineLine} renderOrder={11} />
+    </group>
+  );
+};
 
 export interface SceneProps {
   cards: Card[];
@@ -324,6 +490,7 @@ export const Scene: React.FC<SceneProps> = ({
   const centerScratch = useRef(new THREE.Vector3());
   const speechApexScratch = useRef(new THREE.Vector3());
 
+  // After Avatar movement (priority 0) so counter-scroll matches the same frame.
   useFrame(() => {
     if (groupRef.current && avatarRef.current) {
       groupRef.current.position.x = -avatarRef.current.position.x;
@@ -337,7 +504,7 @@ export const Scene: React.FC<SceneProps> = ({
       avatarRef.current.localToWorld(speechApexScratch.current);
       avatarSpeechApexWorldRef.current.copy(speechApexScratch.current);
     }
-  });
+  }, 1);
 
   return (
     <>

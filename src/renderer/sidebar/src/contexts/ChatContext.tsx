@@ -15,11 +15,6 @@ interface ChatContextType {
     // Chat actions
     sendMessage: (content: string) => Promise<void>
     clearChat: () => void
-
-    // Page content access
-    getPageContent: () => Promise<string | null>
-    getPageText: () => Promise<string | null>
-    getCurrentUrl: () => Promise<string | null>
 }
 
 const ChatContext = createContext<ChatContextType | null>(null)
@@ -90,33 +85,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [])
 
-    const getPageContent = useCallback(async () => {
-        try {
-            return await window.sidebarAPI.getPageContent()
-        } catch (error) {
-            console.error('Failed to get page content:', error)
-            return null
-        }
-    }, [])
-
-    const getPageText = useCallback(async () => {
-        try {
-            return await window.sidebarAPI.getPageText()
-        } catch (error) {
-            console.error('Failed to get page text:', error)
-            return null
-        }
-    }, [])
-
-    const getCurrentUrl = useCallback(async () => {
-        try {
-            return await window.sidebarAPI.getCurrentUrl()
-        } catch (error) {
-            console.error('Failed to get current URL:', error)
-            return null
-        }
-    }, [])
-
     // Set up message listeners
     useEffect(() => {
         // Listen for message updates from main process
@@ -146,9 +114,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         sendMessage,
         clearChat,
-        getPageContent,
-        getPageText,
-        getCurrentUrl
     }
 
     return (

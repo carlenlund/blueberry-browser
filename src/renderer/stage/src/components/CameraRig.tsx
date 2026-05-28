@@ -14,19 +14,27 @@ export const CameraRig: React.FC<{
   lookTargetRef: React.MutableRefObject<THREE.Vector3>;
 }> = ({ zoom, talkMode, avatarCenterWorldRef, lookTargetRef }) => {
   const { camera } = useThree();
-  const positionTarget = useRef(CAMERA_DEFAULT_POSITION.clone());
-  useFrame((_, delta) => {
-    const anchor = avatarCenterWorldRef.current;
-    const defaultPos = CAMERA_DEFAULT_POSITION.clone().multiplyScalar(1 / zoom);
-    const talkPos = anchor.clone().add(TALK_CAMERA_OFFSET);
-    const desiredPos = talkMode ? talkPos : defaultPos;
-    const desiredLook = talkMode ? anchor.clone() : DEFAULT_LOOK_AT;
+  const desiredPos = useRef(CAMERA_DEFAULT_POSITION.clone());
+  const desiredLook = useRef(DEFAULT_LOOK_AT.clone());
 
-    const t = 1 - Math.exp(-8 * delta);
-    positionTarget.current.copy(desiredPos);
-    camera.position.lerp(positionTarget.current, t);
-    lookTargetRef.current.lerp(desiredLook, t);
+  // After Scene updates avatar world refs (priority 1).
+  useFrame((_, delta) => {
+    if (talkMode) {
+      const anchor = avatarCenterWorldRef.current;
+      desiredPos.current.copy(anchor).add(TALK_CAMERA_OFFSET);
+      desiredLook.current.copy(anchor);
+      const t = 1 - Math.exp(-8 * delta);
+      camera.position.lerp(desiredPos.current, t);
+      lookTargetRef.current.lerp(desiredLook.current, t);
+      camera.lookAt(lookTargetRef.current);
+      return;
+    }
+
+    desiredPos.current.copy(CAMERA_DEFAULT_POSITION).multiplyScalar(1 / zoom);
+    camera.position.copy(desiredPos.current);
+    lookTargetRef.current.copy(DEFAULT_LOOK_AT);
     camera.lookAt(lookTargetRef.current);
-  });
+  }, 2);
+
   return null;
 };

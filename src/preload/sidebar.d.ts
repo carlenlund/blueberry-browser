@@ -10,13 +10,6 @@ interface ChatRequest {
   messageId: string;
 }
 
-interface TabInfo {
-  id: string;
-  title: string;
-  url: string;
-  isActive: boolean;
-}
-
 interface SidebarAPI {
   // Chat functionality
   sendChatMessage: (request: Partial<ChatRequest>) => Promise<void>;
@@ -24,14 +17,6 @@ interface SidebarAPI {
   getMessages: () => Promise<any[]>;
   onMessagesUpdated: (callback: (messages: any[]) => void) => void;
   removeMessagesUpdatedListener: () => void;
-
-  // Page content access
-  getPageContent: () => Promise<string | null>;
-  getPageText: () => Promise<string | null>;
-  getCurrentUrl: () => Promise<string | null>;
-
-  // Tab information
-  getActiveTabInfo: () => Promise<TabInfo | null>;
 }
 
 declare global {

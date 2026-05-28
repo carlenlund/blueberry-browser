@@ -11,7 +11,8 @@ export const CARD_GAP = 0.84;
 /** Card body height below the walkable top surface. */
 export const CARD_CUBE_HEIGHT = 12;
 /** Fall this far below card tops before respawning on the first card. */
-export const VOID_RESPAWN_Y = CARD_SURFACE_Y - 5;
+export const VOID_RESPAWN_FALL_DEPTH = 15;
+export const VOID_RESPAWN_Y = CARD_SURFACE_Y - VOID_RESPAWN_FALL_DEPTH;
 /** Blue distance fog — near/far tuned for cracks between card cubes. */
 export const STAGE_FOG_NEAR = 10;
 export const STAGE_FOG_FAR = 30;

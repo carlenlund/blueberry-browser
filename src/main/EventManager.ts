@@ -3,7 +3,7 @@ import type { Window } from "./Window";
 
 /**
  * Wires up every IPC channel the renderers can call. Each section maps to a
- * single feature area (tabs, sidebar, page content, dark mode, stage).
+ * single feature area (tabs, sidebar, dark mode, stage).
  */
 export class EventManager {
   private mainWindow: Window;
@@ -12,10 +12,8 @@ export class EventManager {
     this.mainWindow = mainWindow;
     this.handleTabEvents();
     this.handleSidebarEvents();
-    this.handlePageContentEvents();
     this.handleDarkModeEvents();
     this.handleStageEvents();
-    ipcMain.on("ping", () => console.log("pong"));
   }
 
   cleanup(): void {
@@ -48,12 +46,6 @@ export class EventManager {
       }));
     });
 
-    ipcMain.handle("navigate-to", async (_, url: string) => {
-      const tab = this.mainWindow.createTab(url);
-      await tab.settleAfterNavigation(1500);
-      this.mainWindow.switchActiveTab(tab.id);
-    });
-
     ipcMain.handle("navigate-tab", async (_, tabId: string, url: string) => {
       const tab = this.mainWindow.getTab(tabId);
       if (!tab) return false;
@@ -62,10 +54,6 @@ export class EventManager {
       this.mainWindow.switchActiveTab(newTab.id);
       return true;
     });
-
-    ipcMain.handle("go-back", () => this.mainWindow.activeTab?.goBack());
-    ipcMain.handle("go-forward", () => this.mainWindow.activeTab?.goForward());
-    ipcMain.handle("reload", () => this.mainWindow.activeTab?.reload());
 
     ipcMain.handle("tab-go-back", (_, tabId: string) => {
       const tab = this.mainWindow.getTab(tabId);
@@ -86,18 +74,6 @@ export class EventManager {
       if (!tab) return false;
       tab.reload();
       return true;
-    });
-
-    ipcMain.handle("get-active-tab-info", () => {
-      const tab = this.mainWindow.activeTab;
-      if (!tab) return null;
-      return {
-        id: tab.id,
-        url: tab.url,
-        title: tab.title,
-        canGoBack: tab.webContents.canGoBack(),
-        canGoForward: tab.webContents.canGoForward(),
-      };
     });
   }
 
@@ -138,34 +114,6 @@ export class EventManager {
     ipcMain.handle("sidebar-get-messages", () =>
       this.mainWindow.sidebar.client.getMessages()
     );
-  }
-
-  // ---------- page content ----------
-
-  private handlePageContentEvents(): void {
-    ipcMain.handle("get-page-content", async () => {
-      const tab = this.mainWindow.activeTab;
-      if (!tab) return null;
-      try {
-        return await tab.getTabHtml();
-      } catch (err) {
-        console.error("get-page-content failed", err);
-        return null;
-      }
-    });
-
-    ipcMain.handle("get-page-text", async () => {
-      const tab = this.mainWindow.activeTab;
-      if (!tab) return null;
-      try {
-        return await tab.getTabText();
-      } catch (err) {
-        console.error("get-page-text failed", err);
-        return null;
-      }
-    });
-
-    ipcMain.handle("get-current-url", () => this.mainWindow.activeTab?.url ?? null);
   }
 
   // ---------- dark mode ----------
@@ -209,12 +157,6 @@ export class EventManager {
       (_, cardId: string, normX: number, normY: number, deltaY: number) =>
         this.mainWindow.stage.forwardCardScroll(cardId, normX, normY, deltaY)
     );
-
-    ipcMain.handle("stage:close", () => {
-      this.mainWindow.stage.hide();
-      this.mainWindow.updateAllBounds();
-      return true;
-    });
 
     ipcMain.handle(
       "stage:mine-dom",

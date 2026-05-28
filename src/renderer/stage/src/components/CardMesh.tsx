@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
@@ -7,7 +7,45 @@ import {
   CARD_LENGTH,
   CARD_SURFACE_Y,
 } from "../stageConstants";
-import { useImageTexture } from "../hooks/useImageTexture";
+
+function useImageTexture(dataUrl: string | undefined): THREE.Texture | null {
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!dataUrl) {
+      setTexture(null);
+      return;
+    }
+    const loader = new THREE.TextureLoader();
+    let disposed = false;
+    loader.load(
+      dataUrl,
+      (tex) => {
+        if (disposed) {
+          tex.dispose();
+          return;
+        }
+        tex.flipY = true;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.generateMipmaps = false;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.needsUpdate = true;
+        setTexture((prev) => {
+          prev?.dispose();
+          return tex;
+        });
+      },
+      undefined,
+      () => {
+        if (!disposed) setTexture(null);
+      }
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [dataUrl]);
+  return texture;
+}
 
 export interface CardMeshProps {
   cardId: string;

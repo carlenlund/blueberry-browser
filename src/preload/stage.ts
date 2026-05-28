@@ -14,7 +14,6 @@ export {
  *
  *   stage:get-state     (renderer → main)  request current snapshot
  *   stage:activate-card (renderer → main)  re-visit this card (switch tab + load URL)
- *   stage:close         (renderer → main)  hide the stage overlay
  *   stage:mine-dom      (renderer → main)  dissolve letters in a card's tab DOM
  *
  *   stage:state         (main → renderer)  pushed whenever cards change
@@ -34,7 +33,6 @@ const stageAPI = {
     deltaY: number
   ): Promise<boolean> =>
     ipcRenderer.invoke("stage:card-scroll", cardId, normX, normY, deltaY),
-  closeStage: (): Promise<void> => ipcRenderer.invoke("stage:close"),
   mineDom: (
     cardId: string,
     normX: number,

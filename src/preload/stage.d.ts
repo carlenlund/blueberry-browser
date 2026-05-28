@@ -43,7 +43,6 @@ export interface StageAPI {
     normY: number,
     deltaY: number
   ) => Promise<boolean>;
-  closeStage: () => Promise<void>;
   mineDom: (
     cardId: string,
     normX: number,

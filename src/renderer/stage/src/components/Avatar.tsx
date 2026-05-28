@@ -25,15 +25,31 @@ import {
   AVATAR_WALK_DAMP,
   AVATAR_YAW_OFFSET,
   AVATAR_HEIGHT,
+  CARD_LENGTH,
   CARD_SURFACE_Y,
+  DEFAULT_PAGE_ASPECT,
   GROUND_CONTACT_EPSILON,
   GRAVITY,
   JUMP_VELOCITY,
   VOID_RESPAWN_Y,
   type AvatarLoopProfile,
 } from "../stageConstants";
-import { findCardAtStagePosition } from "../stageLayout";
-import type { StageCardLayoutEntry } from "../stageTypes";
+import type { Card, StageCardLayoutEntry } from "../stageTypes";
+
+export function findCardAtStagePosition(
+  avatarX: number,
+  avatarZ: number,
+  layout: { card: Card; x: number; aspect?: number }[]
+): { card: Card; x: number; aspect: number } | null {
+  if (layout.length === 0) return null;
+  const half = CARD_LENGTH / 2;
+  for (const entry of layout) {
+    if (Math.abs(avatarX - entry.x) > half) continue;
+    if (Math.abs(avatarZ) > half) continue;
+    return { card: entry.card, x: entry.x, aspect: entry.aspect ?? DEFAULT_PAGE_ASPECT };
+  }
+  return null;
+}
 
 type AvatarGltf = {
   scene: THREE.Group;
@@ -194,6 +210,7 @@ export const Avatar = forwardRef<THREE.Group, AvatarProps>(function Avatar(
   const targetZRef = useRef(targetZ);
   const wasKeyboardMovingRef = useRef(false);
   const justRespawnedRef = useRef(false);
+  const voidFallingRef = useRef(false);
   const groundY = CARD_SURFACE_Y + AVATAR_HEIGHT;
   const verticalY = useRef(groundY);
   const verticalVelocity = useRef(0);
@@ -222,6 +239,7 @@ export const Avatar = forwardRef<THREE.Group, AvatarProps>(function Avatar(
     pendingJumpClickRef.current = false;
     wasAirborneRef.current = false;
     justRespawnedRef.current = true;
+    voidFallingRef.current = false;
     setIsAirborne(false);
     onVoidRespawn();
     onPositionChange(x, z);
@@ -263,10 +281,12 @@ export const Avatar = forwardRef<THREE.Group, AvatarProps>(function Avatar(
     pendingJumpClickRef.current = false;
   }, [talkMode, groundY]);
 
+  // Run before Scene counter-scroll so group offset matches this frame's avatar X.
   useFrame((_, delta) => {
     if (!root.current) return;
     const keys = pressedArrowKeysRef.current;
-    const keyboardMoving = !talkMode && keys.size > 0;
+    const voidFalling = voidFallingRef.current;
+    const keyboardMoving = !talkMode && !voidFalling && keys.size > 0;
 
     if (keyboardMoving && !wasKeyboardMovingRef.current) {
       onKeyboardMoveStart();
@@ -280,6 +300,9 @@ export const Avatar = forwardRef<THREE.Group, AvatarProps>(function Avatar(
     const hadJustRespawned = justRespawnedRef.current;
     if (hadJustRespawned) {
       justRespawnedRef.current = false;
+      next = prevX.current;
+      nextDepth = prevZ.current;
+    } else if (voidFalling) {
       next = prevX.current;
       nextDepth = prevZ.current;
     } else if (talkMode) {
@@ -324,14 +347,21 @@ export const Avatar = forwardRef<THREE.Group, AvatarProps>(function Avatar(
       verticalY.current <= groundY + GROUND_CONTACT_EPSILON;
 
     if (!talkMode) {
+      if (!voidFalling && !onCard && verticalY.current < groundY - GROUND_CONTACT_EPSILON) {
+        voidFallingRef.current = true;
+        keys?.clear();
+        jumpRequestedRef.current = false;
+      }
+      const inVoidFall = voidFallingRef.current;
+
       if (jumpRequestedRef.current) {
         jumpRequestedRef.current = false;
-        if (groundedOnCard) {
+        if (!inVoidFall && groundedOnCard) {
           verticalVelocity.current = JUMP_VELOCITY;
           pendingJumpClickRef.current = true;
         }
       }
-      if (onCard) {
+      if (onCard && !inVoidFall) {
         if (!groundedOnCard || verticalVelocity.current > 0) {
           verticalVelocity.current -= GRAVITY * delta;
           verticalY.current += verticalVelocity.current * delta;
@@ -389,7 +419,7 @@ export const Avatar = forwardRef<THREE.Group, AvatarProps>(function Avatar(
       delta
     );
     root.current.rotation.z = THREE.MathUtils.damp(root.current.rotation.z, 0, 8, delta);
-  });
+  }, 0);
 
   const displayMode: AvatarDisplayMode = isAirborne ? "jumping" : mode;
 
