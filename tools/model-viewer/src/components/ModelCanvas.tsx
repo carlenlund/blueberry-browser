@@ -1,7 +1,8 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react'
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
+import { SkeletonUtils } from 'three-stdlib'
 
 type ModelCanvasProps = {
   modelPath: string
@@ -12,7 +13,8 @@ type ModelCanvasProps = {
 
 function ModelInstance({ modelPath, playing, speed, resetToken }: ModelCanvasProps) {
   const { scene, animations } = useGLTF(modelPath)
-  const root = useMemo(() => scene.clone(true), [scene])
+  // Skinned meshes need SkeletonUtils.clone for animation bindings to work reliably.
+  const root = useMemo(() => SkeletonUtils.clone(scene), [scene])
   const mixerRef = useRef<THREE.AnimationMixer | null>(null)
 
   useEffect(() => {
@@ -42,22 +44,11 @@ function ModelInstance({ modelPath, playing, speed, resetToken }: ModelCanvasPro
     }
   }, [resetToken])
 
-  useEffect(() => {
-    let rafId = 0
-    let previous = performance.now()
-
-    const tick = (now: number) => {
-      const delta = (now - previous) / 1000
-      previous = now
-      if (mixerRef.current) {
-        mixerRef.current.update(delta)
-      }
-      rafId = requestAnimationFrame(tick)
+  useFrame((_, delta) => {
+    if (mixerRef.current) {
+      mixerRef.current.update(delta)
     }
-
-    rafId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafId)
-  }, [])
+  })
 
   return <primitive object={root} scale={1} />
 }
