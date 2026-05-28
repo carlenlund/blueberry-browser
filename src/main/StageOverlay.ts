@@ -47,7 +47,8 @@ const CAPTURE_VIEWPORT_HEIGHT = STAGE_CAPTURE_VIEWPORT_HEIGHT;
  *   - A simple capture loop that pushes screenshots keyed by cardId.
  *
  * Window.ts hooks tab navigations to `recordNavigation()` / `updateTitle()` /
- * `detachTab()`. The renderer is the only IPC recipient, so we just send
+ * `detachTab()` (tab close removes that tab's cards). The renderer is the only
+ * IPC recipient, so we just send
  * directly to `this.view.webContents` — no pub/sub class needed.
  */
 export class StageOverlay {
@@ -172,17 +173,20 @@ export class StageOverlay {
     }
   }
 
-  /** Called when a tab closes — its cards become ghosts. */
+  /** Called when a tab closes — remove every card owned by that tab from the stage. */
   detachTab(tabId: string): void {
-    let changed = false;
-    for (const c of this.cards) {
-      if (c.tabId === tabId && c.active) {
-        c.active = false;
-        changed = true;
-      }
-    }
+    const removedIds: string[] = [];
+    this.cards = this.cards.filter((c) => {
+      if (c.tabId !== tabId) return true;
+      removedIds.push(c.id);
+      return false;
+    });
     this.currentCardByTab.delete(tabId);
-    if (changed) this.notifyChange();
+    for (const id of removedIds) {
+      this.lastCaptureAt.delete(id);
+      this.hasGoodCapture.delete(id);
+    }
+    if (removedIds.length > 0) this.notifyChange();
   }
 
   /** Called when the user switches the active tab (re-broadcast snapshot). */

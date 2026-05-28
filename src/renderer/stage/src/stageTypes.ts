@@ -26,3 +26,12 @@ export interface RunToPointEvent {
   normY: number;
   mineAfter?: boolean;
 }
+
+export type Thumbnails = Record<string, { dataUrl: string; aspect: number }>;
+
+export type StageCardLayoutEntry = {
+  card: Card;
+  x: number;
+  depthZ: number;
+  aspect: number;
+};

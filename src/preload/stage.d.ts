@@ -1,7 +1,7 @@
 import { ElectronAPI } from "@electron-toolkit/preload";
 
 export declare const STAGE_CARD_LENGTH: 3.6;
-export declare const STAGE_CARD_GAP: 0.36;
+export declare const STAGE_CARD_GAP: 0.54;
 export declare const STAGE_CARD_STRIDE: number;
 
 export interface Card {

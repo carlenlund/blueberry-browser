@@ -1,5 +1,8 @@
 /** DOM id prefix for in-page debug click markers (Tab webContents). */
 export const DEBUG_CLICK_MARKER_ID = "blueberry-stage-click-marker";
+/** Visible duration before the marker fades out and is removed. */
+export const DEBUG_CLICK_MARKER_VISIBLE_MS = 1000;
+export const DEBUG_CLICK_MARKER_FADE_MS = 280;
 
 /**
  * Installs a capture-phase click listener in the page main world.
@@ -8,6 +11,30 @@ export const DEBUG_CLICK_MARKER_ID = "blueberry-stage-click-marker";
 export const INSTALL_DEBUG_CLICK_LISTENER_SCRIPT = `
 (function() {
   const MARKER_ID = ${JSON.stringify(DEBUG_CLICK_MARKER_ID)};
+  const VISIBLE_MS = ${DEBUG_CLICK_MARKER_VISIBLE_MS};
+  const FADE_MS = ${DEBUG_CLICK_MARKER_FADE_MS};
+
+  function scheduleMarkerFade(marker) {
+    const fadeToken = String(Date.now());
+    marker.setAttribute("data-fade-token", fadeToken);
+    const removeMarker = () => {
+      if (marker.isConnected) marker.remove();
+    };
+    window.setTimeout(() => {
+      if (!marker.isConnected || marker.getAttribute("data-fade-token") !== fadeToken) return;
+      marker.style.transition = "opacity " + FADE_MS + "ms ease-out";
+      marker.style.opacity = "0";
+      let removed = false;
+      const onEnd = () => {
+        if (removed) return;
+        removed = true;
+        marker.removeEventListener("transitionend", onEnd);
+        removeMarker();
+      };
+      marker.addEventListener("transitionend", onEnd);
+      window.setTimeout(onEnd, FADE_MS + 80);
+    }, VISIBLE_MS);
+  }
 
   function showMarker(doc, localX, localY, suffix) {
     const fullId = MARKER_ID + suffix;
@@ -29,6 +56,7 @@ export const INSTALL_DEBUG_CLICK_LISTENER_SCRIPT = `
       "z-index:2147483647",
       "pointer-events:none",
       "box-sizing:border-box",
+      "opacity:1",
     ].join(";");
 
     const crossH = doc.createElement("div");
@@ -41,7 +69,10 @@ export const INSTALL_DEBUG_CLICK_LISTENER_SCRIPT = `
     marker.appendChild(crossV);
 
     const root = doc.body || doc.documentElement;
-    if (root) root.appendChild(marker);
+    if (root) {
+      root.appendChild(marker);
+      scheduleMarkerFade(marker);
+    }
   }
 
   window.__blueberryShowClickMarker = function(x, y) {

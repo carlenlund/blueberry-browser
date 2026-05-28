@@ -5,7 +5,7 @@
 
 /** Layout stride for stage cards (must match StageApp card spacing). */
 export const STAGE_CARD_LENGTH = 3.6;
-export const STAGE_CARD_GAP = 0.36;
+export const STAGE_CARD_GAP = 0.54;
 export const STAGE_CARD_STRIDE = STAGE_CARD_LENGTH + STAGE_CARD_GAP;
 
 export interface Card {
