@@ -80,6 +80,20 @@ $ pnpm install
 $ pnpm dev
 ```
 
+### Standalone Model Viewer
+```bash
+$ npm run viewer:dev
+```
+
+This launches a separate Vite app at `tools/model-viewer` to preview models and animations from `resources/models`.
+
+Available controls:
+- switch between `variant` and `prop` model mode
+- choose variant (`A/B/C`) and animation (`idle/jump/mining/reading/running/searching/thinking/typing/yessir`)
+- play/pause animation, adjust speed, and reset animation time
+
+To add more assets for the viewer, place `.glb` files under `resources/models/gltf`.
+
 **Add an OpenAI API key to `.env`** in the root folder.
 
 Strawberry will reimburse LLM costs, so go crazy! *(Please not more than a few hundred dollars though!)*

@@ -19,7 +19,10 @@
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "viewer:dev": "npm --prefix tools/model-viewer run dev",
+    "viewer:build": "npm --prefix tools/model-viewer run build",
+    "viewer:preview": "npm --prefix tools/model-viewer run preview"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.17",
@@ -27,13 +30,16 @@
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@radix-ui/react-slot": "^1.2.3",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
     "ai": "^5.0.44",
     "class-variance-authority": "^0.7.1",
     "dotenv": "^17.2.2",
     "lucide-react": "^0.544.0",
     "react-markdown": "^10.1.0",
     "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
@@ -42,6 +48,7 @@
     "@types/node": "^22.16.5",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.21",
     "clsx": "^2.1.1",
