@@ -127,8 +127,7 @@ export class AppMenu {
   }
 
   private handleToggleSidebar(): void {
-    this.mainWindow.sidebar.toggle();
-    this.mainWindow.updateAllBounds();
+    this.mainWindow.toggleSidebar();
   }
 
   private handleToggleDevTools(): void {

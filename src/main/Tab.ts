@@ -1,4 +1,10 @@
 import { NativeImage, WebContentsView } from "electron";
+import {
+  buildShowClickMarkerScript,
+  INSTALL_DEBUG_CLICK_LISTENER_SCRIPT,
+  type ClickMarkerDebugResult,
+} from "./tabDebugClickMarker";
+import { INSTALL_LINK_NEW_TAB_SCRIPT } from "./tabLinkCapture";
 
 export class Tab {
   private webContentsView: WebContentsView;
@@ -8,7 +14,7 @@ export class Tab {
   private _isVisible: boolean = false;
   private _exclusiveRunChain: Promise<void> = Promise.resolve();
 
-  constructor(id: string, url: string = "https://www.google.com") {
+  constructor(id: string, url: string = "https://hackernews.com") {
     this._id = id;
     this._url = url;
     this._title = "New Tab";
@@ -31,19 +37,44 @@ export class Tab {
   }
 
   private setupEventListeners(): void {
+    const wc = this.webContentsView.webContents;
+
     // Update title when page title changes
-    this.webContentsView.webContents.on("page-title-updated", (_, title) => {
+    wc.on("page-title-updated", (_, title) => {
       this._title = title;
     });
 
     // Update URL when navigation occurs
-    this.webContentsView.webContents.on("did-navigate", (_, url) => {
+    wc.on("did-navigate", (_, url) => {
       this._url = url;
     });
 
-    this.webContentsView.webContents.on("did-navigate-in-page", (_, url) => {
+    wc.on("did-navigate-in-page", (_, url) => {
       this._url = url;
     });
+
+    // In-page debug click markers on real user clicks (works without stage overlay).
+    const installPageScripts = (): void => {
+      void wc.executeJavaScript(INSTALL_DEBUG_CLICK_LISTENER_SCRIPT, true).catch(() => {});
+      void wc.executeJavaScript(INSTALL_LINK_NEW_TAB_SCRIPT, true).catch(() => {});
+    };
+    wc.on("dom-ready", installPageScripts);
+    wc.on("did-finish-load", installPageScripts);
+  }
+
+  /** Show debug marker at viewport coordinates (also used for stage-forwarded clicks). */
+  async showDebugClickMarkerAt(x: number, y: number): Promise<ClickMarkerDebugResult | null> {
+    const wc = this.webContentsView.webContents;
+    if (wc.isDestroyed()) return null;
+    try {
+      await wc.executeJavaScript(INSTALL_DEBUG_CLICK_LISTENER_SCRIPT, true);
+      return (await wc.executeJavaScript(
+        buildShowClickMarkerScript(x, y),
+        true
+      )) as ClickMarkerDebugResult;
+    } catch {
+      return null;
+    }
   }
 
   // Getters

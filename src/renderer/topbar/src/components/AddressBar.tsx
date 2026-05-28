@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { ArrowLeft, ArrowRight, RefreshCw, Loader2, PanelLeftClose, PanelLeft } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RefreshCw, Loader2, PanelRightClose, PanelRight, Layers } from 'lucide-react'
 import { useBrowser } from '../contexts/BrowserContext'
 import { ToolBarButton } from '../components/ToolBarButton'
 import { Favicon } from '../components/Favicon'
@@ -12,6 +12,33 @@ export const AddressBar: React.FC = () => {
     const [isEditing, setIsEditing] = useState(false)
     const [isFocused, setIsFocused] = useState(false)
     const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+    const [isStageOpen, setIsStageOpen] = useState(false)
+
+    useEffect(() => {
+        let cancelled = false
+        const init = async (): Promise<void> => {
+            try {
+                const [stageVisible, sidebarVisible] = await Promise.all([
+                    window.topBarAPI?.getStageVisible(),
+                    window.topBarAPI?.getSidebarVisible(),
+                ])
+                if (!cancelled) {
+                    if (typeof stageVisible === 'boolean') setIsStageOpen(stageVisible)
+                    if (typeof sidebarVisible === 'boolean') setIsSidebarOpen(sidebarVisible)
+                }
+            } catch (err) {
+                console.error('Failed to read overlay visibility', err)
+            }
+        }
+        void init()
+        const offSidebar = window.topBarAPI?.onSidebarVisibility((visible) => {
+            setIsSidebarOpen(visible)
+        })
+        return () => {
+            cancelled = true
+            offSidebar?.()
+        }
+    }, [])
 
     // Update URL when active tab changes
     useEffect(() => {
@@ -38,8 +65,7 @@ export const AddressBar: React.FC = () => {
         }
 
         navigateToUrl(finalUrl)
-        setIsSidebarOpen(false)
-        window.topBarAPI?.toggleSidebar(false)
+        void window.topBarAPI?.setSidebarVisible(false)
         setIsEditing(false)
         setIsFocused(false)
             ; (document.activeElement as HTMLElement)?.blur()
@@ -105,9 +131,20 @@ export const AddressBar: React.FC = () => {
     }
 
     const toggleSidebar = () => {
-        const next = !isSidebarOpen
-        setIsSidebarOpen(next)
-        window.topBarAPI?.toggleSidebar(next)
+        void window.topBarAPI?.toggleSidebar()
+    }
+
+    const toggleStage = async () => {
+        try {
+            const next = await window.topBarAPI?.toggleStage()
+            if (typeof next === 'boolean') {
+                setIsStageOpen(next)
+            } else {
+                setIsStageOpen((prev) => !prev)
+            }
+        } catch (err) {
+            console.error('Failed to toggle stage', err)
+        }
     }
 
     return (
@@ -198,7 +235,12 @@ export const AddressBar: React.FC = () => {
             <div className="flex items-center gap-1 app-region-no-drag">
                 <DarkModeToggle />
                 <ToolBarButton
-                    Icon={isSidebarOpen ? PanelLeftClose : PanelLeft}
+                    Icon={Layers}
+                    onClick={toggleStage}
+                    toggled={isStageOpen}
+                />
+                <ToolBarButton
+                    Icon={isSidebarOpen ? PanelRightClose : PanelRight}
                     onClick={toggleSidebar}
                     toggled={isSidebarOpen}
                 />

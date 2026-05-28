@@ -1,7 +1,10 @@
-import { BaseWindow, nativeTheme, shell } from "electron";
+import { BaseWindow, nativeTheme } from "electron";
 import { Tab } from "./Tab";
 import { TopBar } from "./TopBar";
-import { SideBar } from "./SideBar";
+import { SideBar, SIDEBAR_WIDTH } from "./SideBar";
+import { StageOverlay } from "./StageOverlay";
+
+const TOPBAR_HEIGHT = 88;
 
 /** Matches `--muted` / `--foreground` in `src/renderer/topbar/src/index.css` */
 const TITLE_BAR_OVERLAY_LIGHT = {
@@ -14,6 +17,16 @@ const TITLE_BAR_OVERLAY_DARK = {
   symbolColor: "#fafafa",
 } as const;
 
+/**
+ * Owns the BrowserWindow and its three overlay views:
+ *
+ *   ┌─ TopBar (address bar, tab strip)
+ *   ├─ Tab content (one WebContentsView per tab, only the active one shown)
+ *   ├─ StageOverlay (the 3D tab deck, hidden by default)
+ *   └─ SideBar (chat panel, anchored to the right when visible)
+ *
+ * The Stage is mostly self-contained — Window just tells it when tabs change.
+ */
 export class Window {
   private _baseWindow: BaseWindow;
   private tabsMap: Map<string, Tab> = new Map();
@@ -21,9 +34,9 @@ export class Window {
   private tabCounter: number = 0;
   private _topBar: TopBar;
   private _sideBar: SideBar;
+  private _stage: StageOverlay;
 
   constructor() {
-    // Create the browser window.
     this._baseWindow = new BaseWindow({
       width: 1000,
       height: 800,
@@ -38,19 +51,16 @@ export class Window {
 
     this._topBar = new TopBar(this._baseWindow);
     this._sideBar = new SideBar(this._baseWindow);
+    this._stage = new StageOverlay(this);
+    this._stage.setSidebarOpen(this._sideBar.getIsVisible());
 
-    // Set the window reference on the LLM client to avoid circular dependency
     this._sideBar.client.setWindow(this);
 
-    // Create the first tab
     this.createTab();
 
-    // Set up window resize handler
     this._baseWindow.on("resize", () => {
-      this.updateTabBounds();
       this._topBar.updateBounds();
-      this._sideBar.updateBounds();
-      // Notify renderer of resize through active tab
+      this.updateAllBounds();
       const bounds = this._baseWindow.getBounds();
       if (this.activeTab) {
         this.activeTab.webContents.send("window-resized", {
@@ -60,17 +70,11 @@ export class Window {
       }
     });
 
-    // Handle external link opening
-    this.tabsMap.forEach((tab) => {
-      tab.webContents.setWindowOpenHandler((details) => {
-        shell.openExternal(details.url);
-        return { action: "deny" };
-      });
+    this._baseWindow.on("closed", () => {
+      this.tabsMap.forEach((tab) => tab.destroy());
+      this.tabsMap.clear();
     });
 
-    this.setupEventListeners();
-
-    // Native caption buttons follow OS theme by default; align with app theme.
     this.syncTitleBarOverlayTheme(nativeTheme.shouldUseDarkColors);
   }
 
@@ -87,27 +91,25 @@ export class Window {
     );
   }
 
-  private setupEventListeners(): void {
-    this._baseWindow.on("closed", () => {
-      // Clean up all tabs when window is closed
-      this.tabsMap.forEach((tab) => tab.destroy());
-      this.tabsMap.clear();
-    });
+  // ---------- getters ----------
+
+  get baseWindow(): BaseWindow {
+    return this._baseWindow;
   }
 
-  // Getters
   get window(): BaseWindow {
     return this._baseWindow;
   }
 
   get activeTab(): Tab | null {
-    if (this.activeTabId) {
-      return this.tabsMap.get(this.activeTabId) || null;
-    }
-    return null;
+    return this.activeTabId ? this.tabsMap.get(this.activeTabId) ?? null : null;
   }
 
   get allTabs(): Tab[] {
+    return Array.from(this.tabsMap.values());
+  }
+
+  get tabs(): Tab[] {
     return Array.from(this.tabsMap.values());
   }
 
@@ -115,193 +117,198 @@ export class Window {
     return this.tabsMap.size;
   }
 
-  // Tab management methods
+  get sidebar(): SideBar {
+    return this._sideBar;
+  }
+
+  get topBar(): TopBar {
+    return this._topBar;
+  }
+
+  get stage(): StageOverlay {
+    return this._stage;
+  }
+
+  // ---------- tab management ----------
+
   createTab(url?: string): Tab {
     const tabId = `tab-${++this.tabCounter}`;
     const tab = new Tab(tabId, url);
 
-    // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
+    tab.view.setBounds(this.getContentBounds());
 
-    // Full width below topbar; sidebar WebContentsView stacks on top as an overlay
-    const bounds = this._baseWindow.getBounds();
-    tab.view.setBounds({
-      x: 0,
-      y: 88, // Start below the topbar
-      width: bounds.width,
-      height: bounds.height - 88, // Subtract topbar height
+    this.raiseOverlaysAboveTabs();
+    this.tabsMap.set(tabId, tab);
+    this.attachNewWindowHandler(tab);
+
+    // Every navigation in this tab spawns a fresh card on the stage.
+    tab.webContents.on("did-navigate", (_, navUrl) => {
+      this._stage.recordNavigation(tab, navUrl);
+    });
+    tab.webContents.on("did-navigate-in-page", (_, navUrl, isMainFrame) => {
+      if (isMainFrame) this._stage.recordNavigation(tab, navUrl);
+    });
+    tab.webContents.on("page-title-updated", (_, title) => {
+      this._stage.updateTitle(tab.id, title);
+    });
+    tab.webContents.on("did-stop-loading", () => {
+      void this._stage.refreshTab(tab.id);
     });
 
-    this.raiseSideBarAboveTabs();
-
-    // Store the tab
-    this.tabsMap.set(tabId, tab);
-
-    // If this is the first tab, make it active
     if (this.tabsMap.size === 1) {
       this.switchActiveTab(tabId);
     } else {
-      // Hide the tab initially if it's not the first one
       tab.hide();
+      this._stage.notifyTabActivated();
     }
 
+    const refocusStage = (): void => this.refocusStageIfVisible();
+    tab.webContents.once("did-finish-load", refocusStage);
+    this.refocusStageIfVisible();
     return tab;
+  }
+
+  /**
+   * Route popup/new-window requests to in-app tabs instead of external browser.
+   * This keeps stage-triggered link clicks and target="_blank" behavior internal.
+   */
+  private attachNewWindowHandler(tab: Tab): void {
+    tab.webContents.setWindowOpenHandler((details) => {
+      const created = this.createTab(details.url);
+      this.switchActiveTab(created.id);
+      return { action: "deny" };
+    });
   }
 
   closeTab(tabId: string): boolean {
     const tab = this.tabsMap.get(tabId);
-    if (!tab) {
-      return false;
-    }
+    if (!tab) return false;
 
-    // Remove the WebContentsView from the window
     this._baseWindow.contentView.removeChildView(tab.view);
-
-    // Destroy the tab
     tab.destroy();
-
-    // Remove from our tabs map
     this.tabsMap.delete(tabId);
+    this._stage.detachTab(tabId);
 
-    // If this was the active tab, switch to another tab
     if (this.activeTabId === tabId) {
       this.activeTabId = null;
-      const remainingTabs = Array.from(this.tabsMap.keys());
-      if (remainingTabs.length > 0) {
-        this.switchActiveTab(remainingTabs[0]);
+      const remaining = Array.from(this.tabsMap.keys());
+      if (remaining.length > 0) {
+        this.switchActiveTab(remaining[0]);
       }
     }
 
-    // If no tabs left, close the window
     if (this.tabsMap.size === 0) {
       this._baseWindow.close();
     }
-
     return true;
   }
 
   switchActiveTab(tabId: string): boolean {
     const tab = this.tabsMap.get(tabId);
-    if (!tab) {
-      return false;
-    }
+    if (!tab) return false;
 
-    // Hide the currently active tab
     if (this.activeTabId && this.activeTabId !== tabId) {
-      const currentTab = this.tabsMap.get(this.activeTabId);
-      if (currentTab) {
-        currentTab.hide();
-      }
+      this.tabsMap.get(this.activeTabId)?.hide();
     }
 
-    // Show the new active tab
     tab.show();
     this.activeTabId = tabId;
-
-    // Update the window title to match the tab title
     this._baseWindow.setTitle(tab.title || "Blueberry Browser");
-
+    this._stage.notifyTabActivated();
+    this.refocusStageIfVisible();
     return true;
   }
 
+  /** Stage overlay should keep focus so arrow keys / prompt work after tab changes. */
+  refocusStageIfVisible(): void {
+    if (this._stage.visible) {
+      this._stage.focusOverlay();
+    }
+  }
+
   getTab(tabId: string): Tab | null {
-    return this.tabsMap.get(tabId) || null;
+    return this.tabsMap.get(tabId) ?? null;
   }
 
-  // Window methods
-  show(): void {
-    this._baseWindow.show();
-  }
+  // ---------- window controls ----------
 
-  hide(): void {
-    this._baseWindow.hide();
-  }
-
-  close(): void {
-    this._baseWindow.close();
-  }
-
-  focus(): void {
-    this._baseWindow.focus();
-  }
-
-  minimize(): void {
-    this._baseWindow.minimize();
-  }
-
-  maximize(): void {
-    this._baseWindow.maximize();
-  }
-
-  unmaximize(): void {
-    this._baseWindow.unmaximize();
-  }
-
-  isMaximized(): boolean {
-    return this._baseWindow.isMaximized();
-  }
-
-  setTitle(title: string): void {
-    this._baseWindow.setTitle(title);
-  }
-
-  setBounds(bounds: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-  }): void {
+  show(): void { this._baseWindow.show(); }
+  hide(): void { this._baseWindow.hide(); }
+  close(): void { this._baseWindow.close(); }
+  focus(): void { this._baseWindow.focus(); }
+  minimize(): void { this._baseWindow.minimize(); }
+  maximize(): void { this._baseWindow.maximize(); }
+  unmaximize(): void { this._baseWindow.unmaximize(); }
+  isMaximized(): boolean { return this._baseWindow.isMaximized(); }
+  setTitle(title: string): void { this._baseWindow.setTitle(title); }
+  setBounds(bounds: { x?: number; y?: number; width?: number; height?: number }): void {
     this._baseWindow.setBounds(bounds);
   }
-
   getBounds(): { x: number; y: number; width: number; height: number } {
     return this._baseWindow.getBounds();
   }
 
-  /** Keep sidebar above tab views so the full-width overlay receives input over web content. */
-  private raiseSideBarAboveTabs(): void {
+  // ---------- layout ----------
+
+  /** Area available for tab content + stage (everything but topbar + sidebar). */
+  getContentBounds(): { x: number; y: number; width: number; height: number } {
+    const bounds = this._baseWindow.getBounds();
+    const sidebarReserved =
+      this._sideBar?.getIsVisible() ? Math.min(SIDEBAR_WIDTH, bounds.width) : 0;
+    return {
+      x: 0,
+      y: TOPBAR_HEIGHT,
+      width: Math.max(0, bounds.width - sidebarReserved),
+      height: Math.max(0, bounds.height - TOPBAR_HEIGHT),
+    };
+  }
+
+  /** Re-apply layout to all child views (called on resize + sidebar toggle). */
+  updateAllBounds(): void {
+    // Sidebar first so getContentBounds() reflects its visibility for the rest.
+    this._sideBar.updateBounds();
+    const content = this.getContentBounds();
+    this.tabsMap.forEach((tab) => tab.view.setBounds(content));
+    this._stage.updateBounds();
+  }
+
+  setSidebarVisible(visible: boolean): void {
+    if (visible) this._sideBar.show();
+    else this._sideBar.hide();
+    this.updateAllBounds();
+    this.broadcastSidebarVisibility();
+  }
+
+  toggleSidebar(): boolean {
+    this._sideBar.toggle();
+    this.updateAllBounds();
+    this.broadcastSidebarVisibility();
+    return this._sideBar.getIsVisible();
+  }
+
+  /** Notify renderers that anchor to the right edge (e.g. stage speech bubble). */
+  broadcastSidebarVisibility(): void {
+    const visible = this._sideBar.getIsVisible();
+    const payload = visible;
+    this._stage.setSidebarOpen(visible);
+    this._stage.view.webContents.send("sidebar:visibility", payload);
+    this._topBar.view.webContents.send("sidebar:visibility", payload);
+  }
+
+  /** Stage avatar uses this to play thinking vs idle while the LLM is working. */
+  broadcastChatRequestActive(active: boolean): void {
+    const wc = this._stage.view.webContents;
+    if (wc.isDestroyed()) return;
+    wc.send("sidebar:chat-request-active", active);
+  }
+
+  /** Keep the sidebar + stage z-order above tab content so they receive input. */
+  private raiseOverlaysAboveTabs(): void {
     const content = this._baseWindow.contentView;
     content.removeChildView(this._sideBar.view);
     content.addChildView(this._sideBar.view);
-  }
-
-  // Handle window resize to update tab bounds
-  private updateTabBounds(): void {
-    const bounds = this._baseWindow.getBounds();
-
-    this.tabsMap.forEach((tab) => {
-      tab.view.setBounds({
-        x: 0,
-        y: 88, // Start below the topbar
-        width: bounds.width,
-        height: bounds.height - 88, // Subtract topbar height
-      });
-    });
-  }
-
-  // Public method to update all bounds when sidebar is toggled
-  updateAllBounds(): void {
-    this.updateTabBounds();
-    this._sideBar.updateBounds();
-  }
-
-  // Getter for sidebar to access from main process
-  get sidebar(): SideBar {
-    return this._sideBar;
-  }
-
-  // Getter for topBar to access from main process
-  get topBar(): TopBar {
-    return this._topBar;
-  }
-
-  // Getter for all tabs as array
-  get tabs(): Tab[] {
-    return Array.from(this.tabsMap.values());
-  }
-
-  // Getter for baseWindow to access from Menu
-  get baseWindow(): BaseWindow {
-    return this._baseWindow;
+    content.removeChildView(this._stage.view);
+    content.addChildView(this._stage.view);
   }
 }

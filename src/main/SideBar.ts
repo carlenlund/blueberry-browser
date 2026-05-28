@@ -3,17 +3,21 @@ import { BaseWindow, WebContentsView } from "electron";
 import { join } from "path";
 import { LLMClient } from "./LLMClient";
 
+/** Anchored-right chat panel. */
+export const SIDEBAR_WIDTH = 400;
+
 export class SideBar {
   private webContentsView: WebContentsView;
   private baseWindow: BaseWindow;
   private llmClient: LLMClient;
-  private isVisible: boolean = true;
+  private isVisible: boolean = false;
 
   constructor(baseWindow: BaseWindow) {
     this.baseWindow = baseWindow;
     this.webContentsView = this.createWebContentsView();
     baseWindow.contentView.addChildView(this.webContentsView);
-    this.setupBounds();
+    // Start hidden so layout matches the topbar React state on launch.
+    this.applyHiddenBounds();
 
     // Initialize LLM client
     this.llmClient = new LLMClient(this.webContentsView.webContents);
@@ -46,29 +50,26 @@ export class SideBar {
     return webContentsView;
   }
 
-  private setupBounds(): void {
-    if (!this.isVisible) return;
-
+  private applyVisibleBounds(): void {
     const bounds = this.baseWindow.getBounds();
+    const width = Math.min(SIDEBAR_WIDTH, bounds.width);
     this.webContentsView.setBounds({
-      x: 0,
-      y: 88, // Start below the topbar
-      width: bounds.width,
-      height: bounds.height - 88, // Subtract topbar height
+      x: bounds.width - width,
+      y: 88,
+      width,
+      height: bounds.height - 88,
     });
+  }
+
+  private applyHiddenBounds(): void {
+    this.webContentsView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
   }
 
   updateBounds(): void {
     if (this.isVisible) {
-      this.setupBounds();
+      this.applyVisibleBounds();
     } else {
-      // Hide the sidebar
-      this.webContentsView.setBounds({
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      });
+      this.applyHiddenBounds();
     }
   }
 
@@ -82,17 +83,12 @@ export class SideBar {
 
   show(): void {
     this.isVisible = true;
-    this.setupBounds();
+    this.applyVisibleBounds();
   }
 
   hide(): void {
     this.isVisible = false;
-    this.webContentsView.setBounds({
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-    });
+    this.applyHiddenBounds();
   }
 
   toggle(): void {

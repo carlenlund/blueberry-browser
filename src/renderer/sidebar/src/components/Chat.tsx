@@ -236,7 +236,7 @@ const ChatInput: React.FC<{
                             placeholder="Send a message..."
                             className="w-full resize-none outline-none bg-transparent 
                                      text-foreground placeholder:text-muted-foreground
-                                     min-h-[24px] max-h-[200px]"
+                                     min-h-[24px] max-h-[50px]"
                             rows={1}
                             style={{ lineHeight: '24px' }}
                         />
@@ -327,9 +327,9 @@ export const Chat: React.FC = () => {
             {/* Messages Area */}
             <div
                 ref={scrollContainerRef}
-                className={cn("flex-1 overflow-y-auto pb-4", messages.length === 0 ? "max-h-40" : "")}
+                className={cn("flex-1 overflow-y-auto px-4 pb-4", messages.length === 0 ? "max-h-40" : "")}
             >
-                <div className="h-8 mx-auto px-4">
+                <div className="h-8 mx-auto">
                     {/* New Chat Button - Floating */}
                     {messages.length > 0 && (
                         <Button

@@ -106,6 +106,7 @@ export class LLMClient {
   }
 
   async sendChatMessage(request: ChatRequest): Promise<void> {
+    this.setChatRequestActive(true);
     try {
       const userMessage: CoreMessage = {
         role: "user",
@@ -135,7 +136,13 @@ export class LLMClient {
     } catch (error) {
       console.error("Error in LLM request:", error);
       this.handleStreamError(error);
+    } finally {
+      this.setChatRequestActive(false);
     }
+  }
+
+  private setChatRequestActive(active: boolean): void {
+    this.window?.broadcastChatRequestActive(active);
   }
 
   clearMessages(): void {
@@ -256,11 +263,12 @@ export class LLMClient {
               required: ["url", "script"],
             }),
             execute: async ({ url, script }: { url: string, script: string }) => {
-              const tab = this.window?.activeTab;
-              return await tab?.runExclusive(async () => {
-                if (!tab) {
+              const activeTab = this.window?.activeTab;
+              return await activeTab?.runExclusive(async () => {
+                if (!activeTab || !this.window) {
                   return undefined;
                 }
+                let tab = activeTab;
 
                 if (process.env.NODE_ENV === "development") {
                   console.log('@@@@@@@@@ begin web_content_visit_and_inject_javascript @@@@@@@@@');
@@ -271,8 +279,12 @@ export class LLMClient {
 
                 const alreadyOnPage = tab.url === url;
                 if (!alreadyOnPage) {
-                  await tab.loadURL(url);
-                  await tab.settleAfterNavigation(3000);
+                  // Preserve the current page as its own tab and navigate in a fresh one.
+                  const nextTab = this.window.createTab(url);
+                  // Let the new page finish loading first, then switch active tab.
+                  await nextTab.settleAfterNavigation(3000);
+                  this.window.switchActiveTab(nextTab.id);
+                  tab = nextTab;
                 } else {
                   await tab.ensureDocumentReady();
                 }
@@ -380,4 +392,5 @@ export class LLMClient {
     });
     this.sendMessagesToRenderer();
   }
+
 }

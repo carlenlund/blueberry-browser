@@ -77,7 +77,7 @@ export const TabBar: React.FC = () => {
     const { tabs, createTab, closeTab, switchTab } = useBrowser()
 
     const handleCreateTab = () => {
-        createTab('https://www.google.com')
+        createTab('https://www.hackernews.com')
     }
 
     // Extract favicon from URL (simplified - you might want to improve this)

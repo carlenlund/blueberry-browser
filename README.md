@@ -10,6 +10,47 @@ https://github.com/user-attachments/assets/bbf939e2-d87c-4c77-ab7d-828259f6d28d
 
 You are the **CTO of Blueberry Browser**, a Strawberry competitor. Your mission is to add a feature to Blueberry that makes it superior & more promising than Strawberry.
 
+---
+
+## Blueberry Stage (new feature)
+
+Toggle the **Stage** from the topbar (`Layers` icon, right side, next to the sidebar
+toggle). It opens a full-screen 3D deck where each tab becomes a perspective plane
+with a live thumbnail.
+
+A small **blueberry mascot** walks between the planes in real time as the AI agent
+operates the browser:
+
+| Avatar state | When |
+|--------------|------|
+| Idle | No agent activity |
+| Thinking | Sidebar AI is preparing a response |
+| Walking | Agent is navigating to / loading a tab |
+| Working | Agent is injecting / running JavaScript on a page |
+| Done | Agent turn just completed (quick hop) |
+
+The Stage is fully driven by the existing `LLMClient` tool pipeline — the avatar's
+state mirrors `web_content_visit_and_inject_javascript` calls.
+
+### Try it
+
+1. Open a few tabs (Google, news site, a shop).
+2. Click the **Layers** icon in the topbar to enter the Stage.
+3. From the sidebar chat, ask the agent to do something across tabs, e.g.:
+   - *"On each open tab, summarize the page title in one sentence."*
+4. Watch the avatar walk between planes and switch into **working** mode while
+   the agent runs JS on each page.
+5. Click any plane in the Stage to switch tabs directly.
+
+### Files added
+
+- `src/main/StageOverlay.ts` — WebContentsView for the Stage (mirrors `SideBar`)
+- `src/main/AgentTracker.ts` — Pub/sub for agent state events
+- `src/main/ThumbnailScheduler.ts` — Throttled `Tab.screenshot()` → JPEG → IPC
+- `src/preload/stage.ts` — IPC bridge for the stage renderer
+- `src/renderer/stage/*` — R3F scene (TabStage, TabPlane, AgentAvatar, HudOverlay)
+
+
 But your time is limited—Strawberry is about to raise a two billion dollar Series A round from X-Separator, B17Å and Sequoiadendron giganteum Capital.
 
 ## 🎯 Task

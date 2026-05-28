@@ -27,5 +27,14 @@ export default tseslint.config(
       ...eslintPluginReactRefresh.configs.vite.rules
     }
   },
+  {
+    // react-three-fiber renders custom JSX elements (mesh, planeGeometry, etc.)
+    // that expose three.js-specific props which eslint-plugin-react flags as
+    // unknown DOM properties. Disable that rule for stage R3F components.
+    files: ['src/renderer/stage/**/*.{ts,tsx}'],
+    rules: {
+      'react/no-unknown-property': 'off'
+    }
+  },
   eslintConfigPrettier
 )

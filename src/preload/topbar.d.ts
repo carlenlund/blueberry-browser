@@ -23,7 +23,14 @@ interface TopBarAPI {
   reload: (tabId: string) => Promise<void>;
 
   // Sidebar
-  toggleSidebar: (visible: boolean) => Promise<void>;
+  toggleSidebar: () => Promise<boolean>;
+  setSidebarVisible: (visible: boolean) => Promise<boolean>;
+  getSidebarVisible: () => Promise<boolean>;
+  onSidebarVisibility: (cb: (visible: boolean) => void) => () => void;
+
+  // Stage overlay (3D tab deck)
+  toggleStage: (visible?: boolean) => Promise<boolean>;
+  getStageVisible: () => Promise<boolean>;
 }
 
 declare global {

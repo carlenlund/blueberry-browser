@@ -1,244 +1,232 @@
 import { ipcMain, WebContents } from "electron";
 import type { Window } from "./Window";
 
+/**
+ * Wires up every IPC channel the renderers can call. Each section maps to a
+ * single feature area (tabs, sidebar, page content, dark mode, stage).
+ */
 export class EventManager {
   private mainWindow: Window;
 
   constructor(mainWindow: Window) {
     this.mainWindow = mainWindow;
-    this.setupEventHandlers();
-  }
-
-  private setupEventHandlers(): void {
-    // Tab management events
     this.handleTabEvents();
-
-    // Sidebar events
     this.handleSidebarEvents();
-
-    // Page content events
     this.handlePageContentEvents();
-
-    // Dark mode events
     this.handleDarkModeEvents();
-
-    // Debug events
-    this.handleDebugEvents();
+    this.handleStageEvents();
+    ipcMain.on("ping", () => console.log("pong"));
   }
+
+  cleanup(): void {
+    ipcMain.removeAllListeners();
+  }
+
+  // ---------- tabs ----------
 
   private handleTabEvents(): void {
-    // Create new tab
     ipcMain.handle("create-tab", (_, url?: string) => {
-      const newTab = this.mainWindow.createTab(url);
-      return { id: newTab.id, title: newTab.title, url: newTab.url };
+      const tab = this.mainWindow.createTab(url);
+      return { id: tab.id, title: tab.title, url: tab.url };
     });
 
-    // Close tab
     ipcMain.handle("close-tab", (_, id: string) => {
       this.mainWindow.closeTab(id);
     });
 
-    // Switch tab
     ipcMain.handle("switch-tab", (_, id: string) => {
       this.mainWindow.switchActiveTab(id);
     });
 
-    // Get tabs
     ipcMain.handle("get-tabs", () => {
-      const activeTabId = this.mainWindow.activeTab?.id;
+      const activeId = this.mainWindow.activeTab?.id;
       return this.mainWindow.allTabs.map((tab) => ({
         id: tab.id,
         title: tab.title,
         url: tab.url,
-        isActive: activeTabId === tab.id,
+        isActive: activeId === tab.id,
       }));
     });
 
-    // Navigation (for compatibility with existing code)
-    ipcMain.handle("navigate-to", (_, url: string) => {
-      if (this.mainWindow.activeTab) {
-        this.mainWindow.activeTab.loadURL(url);
-      }
+    ipcMain.handle("navigate-to", async (_, url: string) => {
+      const tab = this.mainWindow.createTab(url);
+      await tab.settleAfterNavigation(1500);
+      this.mainWindow.switchActiveTab(tab.id);
     });
 
     ipcMain.handle("navigate-tab", async (_, tabId: string, url: string) => {
       const tab = this.mainWindow.getTab(tabId);
-      if (tab) {
-        await tab.loadURL(url);
-        return true;
-      }
-      return false;
+      if (!tab) return false;
+      const newTab = this.mainWindow.createTab(url);
+      await newTab.settleAfterNavigation(1500);
+      this.mainWindow.switchActiveTab(newTab.id);
+      return true;
     });
 
-    ipcMain.handle("go-back", () => {
-      if (this.mainWindow.activeTab) {
-        this.mainWindow.activeTab.goBack();
-      }
-    });
+    ipcMain.handle("go-back", () => this.mainWindow.activeTab?.goBack());
+    ipcMain.handle("go-forward", () => this.mainWindow.activeTab?.goForward());
+    ipcMain.handle("reload", () => this.mainWindow.activeTab?.reload());
 
-    ipcMain.handle("go-forward", () => {
-      if (this.mainWindow.activeTab) {
-        this.mainWindow.activeTab.goForward();
-      }
-    });
-
-    ipcMain.handle("reload", () => {
-      if (this.mainWindow.activeTab) {
-        this.mainWindow.activeTab.reload();
-      }
-    });
-
-    // Tab-specific navigation handlers
     ipcMain.handle("tab-go-back", (_, tabId: string) => {
       const tab = this.mainWindow.getTab(tabId);
-      if (tab) {
-        tab.goBack();
-        return true;
-      }
-      return false;
+      if (!tab) return false;
+      tab.goBack();
+      return true;
     });
 
     ipcMain.handle("tab-go-forward", (_, tabId: string) => {
       const tab = this.mainWindow.getTab(tabId);
-      if (tab) {
-        tab.goForward();
-        return true;
-      }
-      return false;
+      if (!tab) return false;
+      tab.goForward();
+      return true;
     });
 
     ipcMain.handle("tab-reload", (_, tabId: string) => {
       const tab = this.mainWindow.getTab(tabId);
-      if (tab) {
-        tab.reload();
-        return true;
-      }
-      return false;
-    });
-
-    // Tab info
-    ipcMain.handle("get-active-tab-info", () => {
-      const activeTab = this.mainWindow.activeTab;
-      if (activeTab) {
-        return {
-          id: activeTab.id,
-          url: activeTab.url,
-          title: activeTab.title,
-          canGoBack: activeTab.webContents.canGoBack(),
-          canGoForward: activeTab.webContents.canGoForward(),
-        };
-      }
-      return null;
-    });
-  }
-
-  private handleSidebarEvents(): void {
-    // Set sidebar visibility
-    ipcMain.handle("toggle-sidebar", (_, visible: boolean) => {
-      if (visible) {
-        this.mainWindow.sidebar.show();
-      } else {
-        this.mainWindow.sidebar.hide();
-      }
-      this.mainWindow.updateAllBounds();
+      if (!tab) return false;
+      tab.reload();
       return true;
     });
 
-    // Chat message
+    ipcMain.handle("get-active-tab-info", () => {
+      const tab = this.mainWindow.activeTab;
+      if (!tab) return null;
+      return {
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+        canGoBack: tab.webContents.canGoBack(),
+        canGoForward: tab.webContents.canGoForward(),
+      };
+    });
+  }
+
+  // ---------- sidebar / stage visibility ----------
+
+  private handleSidebarEvents(): void {
+    ipcMain.handle("toggle-sidebar", () => this.mainWindow.toggleSidebar());
+
+    ipcMain.handle("set-sidebar-visible", (_, visible: boolean) => {
+      this.mainWindow.setSidebarVisible(visible);
+      return this.mainWindow.sidebar.getIsVisible();
+    });
+
+    ipcMain.handle("sidebar:get-visible", () =>
+      this.mainWindow.sidebar.getIsVisible()
+    );
+
+    ipcMain.handle("toggle-stage", (_, visible?: boolean) => {
+      const stage = this.mainWindow.stage;
+      const next = typeof visible === "boolean" ? visible : !stage.visible;
+      if (next) stage.show();
+      else stage.hide();
+      this.mainWindow.updateAllBounds();
+      return next;
+    });
+
+    ipcMain.handle("stage:get-visible", () => this.mainWindow.stage.visible);
+
     ipcMain.handle("sidebar-chat-message", async (_, request) => {
-      // The LLMClient now handles getting the screenshot and context directly
       await this.mainWindow.sidebar.client.sendChatMessage(request);
     });
 
-    // Clear chat
     ipcMain.handle("sidebar-clear-chat", () => {
       this.mainWindow.sidebar.client.clearMessages();
       return true;
     });
 
-    // Get messages
-    ipcMain.handle("sidebar-get-messages", () => {
-      return this.mainWindow.sidebar.client.getMessages();
-    });
+    ipcMain.handle("sidebar-get-messages", () =>
+      this.mainWindow.sidebar.client.getMessages()
+    );
   }
+
+  // ---------- page content ----------
 
   private handlePageContentEvents(): void {
-    // Get page content
     ipcMain.handle("get-page-content", async () => {
-      if (this.mainWindow.activeTab) {
-        try {
-          return await this.mainWindow.activeTab.getTabHtml();
-        } catch (error) {
-          console.error("Error getting page content:", error);
-          return null;
-        }
+      const tab = this.mainWindow.activeTab;
+      if (!tab) return null;
+      try {
+        return await tab.getTabHtml();
+      } catch (err) {
+        console.error("get-page-content failed", err);
+        return null;
       }
-      return null;
     });
 
-    // Get page text
     ipcMain.handle("get-page-text", async () => {
-      if (this.mainWindow.activeTab) {
-        try {
-          return await this.mainWindow.activeTab.getTabText();
-        } catch (error) {
-          console.error("Error getting page text:", error);
-          return null;
-        }
+      const tab = this.mainWindow.activeTab;
+      if (!tab) return null;
+      try {
+        return await tab.getTabText();
+      } catch (err) {
+        console.error("get-page-text failed", err);
+        return null;
       }
-      return null;
     });
 
-    // Get current URL
-    ipcMain.handle("get-current-url", () => {
-      if (this.mainWindow.activeTab) {
-        return this.mainWindow.activeTab.url;
-      }
-      return null;
-    });
+    ipcMain.handle("get-current-url", () => this.mainWindow.activeTab?.url ?? null);
   }
 
+  // ---------- dark mode ----------
+
   private handleDarkModeEvents(): void {
-    // Dark mode broadcasting
-    ipcMain.on("dark-mode-changed", (event, isDarkMode) => {
+    ipcMain.on("dark-mode-changed", (event, isDarkMode: boolean) => {
       this.broadcastDarkMode(event.sender, isDarkMode);
     });
   }
 
-  private handleDebugEvents(): void {
-    // Ping test
-    ipcMain.on("ping", () => console.log("pong"));
-  }
-
   private broadcastDarkMode(sender: WebContents, isDarkMode: boolean): void {
     this.mainWindow.syncTitleBarOverlayTheme(isDarkMode);
-
-    // Send to topbar
-    if (this.mainWindow.topBar.view.webContents !== sender) {
-      this.mainWindow.topBar.view.webContents.send(
-        "dark-mode-updated",
-        isDarkMode
-      );
+    const recipients = [
+      this.mainWindow.topBar.view.webContents,
+      this.mainWindow.sidebar.view.webContents,
+      this.mainWindow.stage.view.webContents,
+      ...this.mainWindow.allTabs.map((tab) => tab.webContents),
+    ];
+    for (const wc of recipients) {
+      if (wc !== sender) wc.send("dark-mode-updated", isDarkMode);
     }
-
-    // Send to sidebar
-    if (this.mainWindow.sidebar.view.webContents !== sender) {
-      this.mainWindow.sidebar.view.webContents.send(
-        "dark-mode-updated",
-        isDarkMode
-      );
-    }
-
-    // Send to all tabs
-    this.mainWindow.allTabs.forEach((tab) => {
-      if (tab.webContents !== sender) {
-        tab.webContents.send("dark-mode-updated", isDarkMode);
-      }
-    });
   }
 
-  // Clean up event listeners
-  public cleanup(): void {
-    ipcMain.removeAllListeners();
+  // ---------- stage ----------
+
+  private handleStageEvents(): void {
+    ipcMain.handle("stage:get-state", () => this.mainWindow.stage.snapshot());
+
+    ipcMain.handle("stage:activate-card", (_, cardId: string) =>
+      this.mainWindow.stage.activateCard(cardId)
+    );
+    ipcMain.handle(
+      "stage:card-click",
+      async (_, cardId: string, normX: number, normY: number) => {
+        const ok = await this.mainWindow.stage.forwardCardClick(cardId, normX, normY);
+        return ok;
+      }
+    );
+    ipcMain.handle(
+      "stage:card-scroll",
+      (_, cardId: string, normX: number, normY: number, deltaY: number) =>
+        this.mainWindow.stage.forwardCardScroll(cardId, normX, normY, deltaY)
+    );
+
+    ipcMain.handle("stage:close", () => {
+      this.mainWindow.stage.hide();
+      this.mainWindow.updateAllBounds();
+      return true;
+    });
+
+    ipcMain.handle(
+      "stage:mine-dom",
+      (
+        _,
+        cardId: string,
+        normX: number,
+        normY: number,
+        options?: { lettersPerBatch?: number; persistRadius?: boolean }
+      ) => this.mainWindow.stage.mineDomAtCard(cardId, normX, normY, options)
+    );
+
+    ipcMain.handle("stage:hide-mine-radii", () => this.mainWindow.stage.hideAllMineRadii());
   }
 }

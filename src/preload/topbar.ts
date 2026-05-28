@@ -23,8 +23,24 @@ const topBarAPI = {
     electronAPI.ipcRenderer.invoke("tab-reload", tabId),
 
   // Sidebar
-  toggleSidebar: (visible: boolean) =>
-    electronAPI.ipcRenderer.invoke("toggle-sidebar", visible),
+  toggleSidebar: (): Promise<boolean> =>
+    electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+  setSidebarVisible: (visible: boolean): Promise<boolean> =>
+    electronAPI.ipcRenderer.invoke("set-sidebar-visible", visible),
+  getSidebarVisible: (): Promise<boolean> =>
+    electronAPI.ipcRenderer.invoke("sidebar:get-visible"),
+  onSidebarVisibility: (cb: (visible: boolean) => void): (() => void) => {
+    const listener = (_: unknown, visible: boolean): void => cb(visible);
+    electronAPI.ipcRenderer.on("sidebar:visibility", listener);
+    return () => {
+      electronAPI.ipcRenderer.removeListener("sidebar:visibility", listener);
+    };
+  },
+
+  // Stage overlay (3D tab deck + agent avatar)
+  toggleStage: (visible?: boolean) =>
+    electronAPI.ipcRenderer.invoke("toggle-stage", visible),
+  getStageVisible: () => electronAPI.ipcRenderer.invoke("stage:get-visible"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

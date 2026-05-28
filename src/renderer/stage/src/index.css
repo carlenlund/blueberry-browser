@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 255 255 255;
+    --foreground: 20 20 20;
+    --muted: 230 230 235;
+    --muted-foreground: 90 90 95;
+    --primary: 30 30 30;
+    --primary-foreground: 250 250 250;
+    --border: 220 220 226;
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 18 18 24;
+    --foreground: 250 250 250;
+    --muted: 36 36 44;
+    --muted-foreground: 170 170 178;
+    --primary: 250 250 250;
+    --primary-foreground: 30 30 30;
+    --border: 50 50 60;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: rgb(var(--background));
+  color: rgb(var(--foreground));
+}
+
+.stage-card-title {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 7px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
